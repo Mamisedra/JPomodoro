@@ -1,7 +1,6 @@
 package com.jpomodoro.ui;
 
 import com.googlecode.lanterna.SGR;
-import com.googlecode.lanterna.TerminalPosition;
 import com.googlecode.lanterna.TerminalSize;
 import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.graphics.TextGraphics;
@@ -497,48 +496,7 @@ public class MainWindow implements TimerListener {
     }
 
     private String readLineModal(String prompt) throws IOException {
-        TerminalSize size = screen.getTerminalSize();
-        int boxW = Math.min(size.getColumns() - 4, 60);
-        int boxH = 5;
-        int x = (size.getColumns() - boxW) / 2;
-        int y = (size.getRows() - boxH) / 2;
-
-        TextGraphics g = screen.newTextGraphics();
-        g.setBackgroundColor(TextColor.ANSI.BLACK);
-        for (int i = 0; i < boxH; i++) {
-            g.putString(x, y + i, padRight("", boxW));
-        }
-        drawBorder(g, x, y, boxW, boxH, " Saisie ");
-        g.setForegroundColor(TextColor.ANSI.WHITE);
-        g.putString(x + 2, y + 1, prompt);
-        screen.refresh();
-
-        StringBuilder sb = new StringBuilder();
-        int inputX = x + 2 + prompt.length();
-        int inputY = y + 2;
-        int maxLen = boxW - 4;
-        screen.setCursorPosition(new TerminalPosition(inputX, inputY));
-
-        while (true) {
-            KeyStroke k = screen.readInput();
-            if (k.getKeyType() == KeyType.Escape) {
-                screen.setCursorPosition(null);
-                return null;
-            }
-            if (k.getKeyType() == KeyType.Enter) {
-                screen.setCursorPosition(null);
-                return sb.toString();
-            }
-            if (k.getKeyType() == KeyType.Backspace && sb.length() > 0) {
-                sb.deleteCharAt(sb.length() - 1);
-            } else if (k.getCharacter() != null && sb.length() < maxLen) {
-                sb.append(k.getCharacter());
-            }
-            g.setForegroundColor(TextColor.ANSI.WHITE);
-            g.putString(x + 2, inputY, padRight(sb.toString(), maxLen));
-            screen.setCursorPosition(new TerminalPosition(inputX + Math.min(sb.length(), maxLen - prompt.length()), inputY));
-            screen.refresh();
-        }
+        return Modal.readLine(screen, prompt, "");
     }
 
     // --- TimerListener ---
