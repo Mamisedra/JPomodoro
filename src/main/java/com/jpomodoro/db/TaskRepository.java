@@ -8,6 +8,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.sql.Types;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -15,7 +16,7 @@ import java.util.List;
 public class TaskRepository {
 
     public Task add(String title) {
-        String sql = "INSERT INTO tasks(title, done, created_at) VALUES (?, 0, ?)";
+        String sql = "INSERT INTO tasks(title, done, priority, created_at) VALUES (?, 0, 'NORMAL', ?)";
         Instant now = Instant.now();
         Connection c = Database.get();
         try (PreparedStatement ps = c.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
@@ -35,7 +36,10 @@ public class TaskRepository {
         String sql = """
             SELECT id, title, done, priority, estimated_pomodoros, created_at, completed_at, deleted_at
             FROM tasks
-            ORDER BY done ASC, id ASC
+            WHERE deleted_at IS NULL
+            ORDER BY done ASC,
+                     CASE priority WHEN 'HIGH' THEN 0 WHEN 'NORMAL' THEN 1 ELSE 2 END,
+                     id ASC
             """;
         List<Task> out = new ArrayList<>();
         Connection c = Database.get();
@@ -77,9 +81,43 @@ public class TaskRepository {
     }
 
     public void delete(long id) {
+        String sql = "UPDATE tasks SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL";
         Connection c = Database.get();
-        try (PreparedStatement ps = c.prepareStatement("DELETE FROM tasks WHERE id = ?")) {
-            ps.setLong(1, id);
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, Instant.now().toString());
+            ps.setLong(2, id);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public Priority cyclePriority(long id) {
+        Connection c = Database.get();
+        try (PreparedStatement select = c.prepareStatement("SELECT priority FROM tasks WHERE id = ?")) {
+            select.setLong(1, id);
+            try (ResultSet rs = select.executeQuery()) {
+                if (!rs.next()) throw new IllegalStateException("Tâche introuvable : " + id);
+                Priority next = Priority.parse(rs.getString(1)).next();
+                try (PreparedStatement update = c.prepareStatement("UPDATE tasks SET priority = ? WHERE id = ?")) {
+                    update.setString(1, next.name());
+                    update.setLong(2, id);
+                    update.executeUpdate();
+                }
+                return next;
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public void setEstimate(long id, Integer estimate) {
+        Connection c = Database.get();
+        try (PreparedStatement ps = c.prepareStatement(
+                "UPDATE tasks SET estimated_pomodoros = ? WHERE id = ?")) {
+            if (estimate == null || estimate <= 0) ps.setNull(1, Types.INTEGER);
+            else ps.setInt(1, estimate);
+            ps.setLong(2, id);
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new RuntimeException(e);

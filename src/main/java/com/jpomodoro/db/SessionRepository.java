@@ -76,5 +76,22 @@ public class SessionRepository {
         }
     }
 
+    public int countFocusForTask(long taskId) {
+        String sql = """
+            SELECT COUNT(*) FROM sessions
+            WHERE type = 'FOCUS' AND completed = 1 AND task_id = ?
+            """;
+        Connection c = Database.get();
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setLong(1, taskId);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getInt(1);
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     public record DailyStats(int focusCount, long focusSeconds) {}
 }
