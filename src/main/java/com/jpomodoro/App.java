@@ -9,6 +9,9 @@ import com.jpomodoro.config.ConfigService;
 import com.jpomodoro.db.Database;
 import com.jpomodoro.db.SessionRepository;
 import com.jpomodoro.db.TaskRepository;
+import com.jpomodoro.notify.Notifier;
+import com.jpomodoro.notify.NotifierFactory;
+import com.jpomodoro.notify.SoundPlayer;
 import com.jpomodoro.timer.PomodoroTimer;
 import com.jpomodoro.ui.MainWindow;
 import org.slf4j.Logger;
@@ -29,7 +32,9 @@ public class App {
 
         TaskRepository taskRepo = new TaskRepository();
         SessionRepository sessionRepo = new SessionRepository();
-        PomodoroTimer timer = new PomodoroTimer(sessionRepo, config);
+        SoundPlayer soundPlayer = new SoundPlayer(config);
+        Notifier notifier = NotifierFactory.current(soundPlayer);
+        PomodoroTimer timer = new PomodoroTimer(sessionRepo, config, notifier);
 
         Terminal terminal = new DefaultTerminalFactory().createTerminal();
         Screen screen = new TerminalScreen(terminal);
