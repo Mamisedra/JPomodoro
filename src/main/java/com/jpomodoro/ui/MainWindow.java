@@ -12,7 +12,11 @@ import com.jpomodoro.config.AppConfig;
 import com.jpomodoro.config.ConfigService;
 import com.jpomodoro.db.FeedbackRepository;
 import com.jpomodoro.db.SessionRepository;
+import com.jpomodoro.db.SessionView;
 import com.jpomodoro.db.TaskRepository;
+import com.jpomodoro.config.AppPaths;
+import com.jpomodoro.export.CsvExporter;
+import com.jpomodoro.stats.Sparkline;
 import com.jpomodoro.model.Priority;
 import com.jpomodoro.model.Summary;
 import com.jpomodoro.model.Task;
@@ -22,9 +26,12 @@ import com.jpomodoro.timer.PomodoroTimer;
 import com.jpomodoro.timer.SessionType;
 import com.jpomodoro.timer.TimerListener;
 import com.jpomodoro.ui.modal.BreakModal;
+import com.jpomodoro.webhook.GoogleChatWebhook;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 
 import java.io.IOException;
@@ -51,6 +58,7 @@ public class MainWindow implements TimerListener {
     private List<Task> tasks;
     private int selectedIndex = 0;
     private int settingIndex = 0;
+    private int historyOffset = 0;
     private Long activeTaskId = null;
     private Tab currentTab = Tab.TIMER;
     private String statusMessage = "Bienvenue. Appuie sur [s] pour démarrer.";
@@ -97,6 +105,13 @@ public class MainWindow implements TimerListener {
 
     private void showBreakModal(PendingBreak pb) throws IOException {
         CompletableFuture<Optional<Summary>> future = summaryService.summarizeAsync(pb.sessionId(), pb.from(), pb.to());
+        future.whenComplete((opt, err) -> {
+            if (opt == null || opt.isEmpty()) return;
+            AppConfig.WebhookSettings w = config.get().webhook();
+            if (w.enabled() && !w.url().isBlank()) {
+                GoogleChatWebhook.sendSummary(w.url(), opt.get());
+            }
+        });
         BreakModal.open(screen, future, feedbackRepo);
         dirty.set(true);
     }
@@ -119,6 +134,7 @@ public class MainWindow implements TimerListener {
                 case 'r' -> { timer.reset(); statusMessage = "Timer réinitialisé."; return; }
                 case 'n' -> { timer.skip(); statusMessage = "Session passée."; return; }
                 case 'm' -> { toggleScheduleMode(); return; }
+                case 'x' -> { exportCsv(); return; }
                 default -> {}
             }
             if (currentTab == Tab.TIMER) {
@@ -142,6 +158,12 @@ public class MainWindow implements TimerListener {
                 if (!tasks.isEmpty()) selectedIndex = Math.min(tasks.size() - 1, selectedIndex + 1);
             } else if (key.getKeyType() == KeyType.Enter) {
                 toggleSelectedTask();
+            }
+        } else if (currentTab == Tab.HISTORY) {
+            if (key.getKeyType() == KeyType.ArrowUp) {
+                historyOffset = Math.max(0, historyOffset - 1);
+            } else if (key.getKeyType() == KeyType.ArrowDown) {
+                historyOffset++;
             }
         } else if (currentTab == Tab.SETTINGS) {
             int rows = settingsRowCount();
@@ -226,6 +248,16 @@ public class MainWindow implements TimerListener {
             if (tasks.get(i).id() == id) { selectedIndex = i; return; }
         }
         selectedIndex = Math.min(selectedIndex, Math.max(0, tasks.size() - 1));
+    }
+
+    private void exportCsv() {
+        try {
+            java.nio.file.Path target = CsvExporter.defaultPath(new AppPaths().home());
+            CsvExporter.export(target, sessionRepo.listLast(10_000));
+            statusMessage = "Export → " + target;
+        } catch (Exception e) {
+            statusMessage = "Export échoué : " + e.getMessage();
+        }
     }
 
     private void toggleScheduleMode() {
@@ -324,8 +356,49 @@ public class MainWindow implements TimerListener {
     private void renderHistoryPlaceholder(TextGraphics g, int x, int y, int w, int h) {
         g.setForegroundColor(TextColor.ANSI.WHITE);
         g.putString(x, y, "Historique", SGR.BOLD);
-        g.setForegroundColor(TextColor.ANSI.BLACK_BRIGHT);
-        g.putString(x, y + 2, "(à venir — Phase 7 : sessions + résumés + sparkline 7 jours + streak)");
+
+        LocalDate today = LocalDate.now();
+        int[] counts = sessionRepo.countFocusPerDay(today.minusDays(6), today);
+        String spark = Sparkline.render(counts);
+        int streak = sessionRepo.streakDays();
+        int totalWeek = 0;
+        for (int v : counts) totalWeek += v;
+
+        String header = String.format("7j : %s  ·  %d focus  ·  streak %d j",
+                spark, totalWeek, streak);
+        g.setForegroundColor(TextColor.ANSI.CYAN);
+        g.putString(x, y + 1, header);
+
+        List<SessionView> sessions = sessionRepo.listLast(200);
+        int rows = h - 3;
+        if (rows <= 0) return;
+        if (historyOffset > Math.max(0, sessions.size() - 1)) {
+            historyOffset = Math.max(0, sessions.size() - 1);
+        }
+        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.systemDefault());
+
+        for (int i = 0; i < rows && historyOffset + i < sessions.size(); i++) {
+            SessionView s = sessions.get(historyOffset + i);
+            String when = dtf.format(s.startedAt());
+            String type = switch (s.type()) {
+                case FOCUS -> "FOCUS";
+                case SHORT_BREAK -> "PAUSE";
+                case LONG_BREAK -> "LONG ";
+            };
+            String dur = String.format("%2dm", s.durationSeconds() / 60);
+            String state = s.completed() ? "✓" : "✗";
+            String task = s.taskTitle() == null ? "" : (" · " + truncate(s.taskTitle(), 20));
+            String fb = s.feedback() == null ? "" : (s.feedback() ? "  👍" : "  👎");
+            String preview = s.summary() == null ? "" : ("  ▸ " + truncate(s.summary().replace('\n', ' '), w - 40));
+            String line = String.format(" %s %s  %s  %s%s%s%s", when, type, dur, state, task, fb, preview);
+
+            if (s.type() == com.jpomodoro.timer.SessionType.FOCUS) {
+                g.setForegroundColor(TextColor.ANSI.WHITE);
+            } else {
+                g.setForegroundColor(TextColor.ANSI.BLACK_BRIGHT);
+            }
+            g.putString(x, y + 3 + i, truncate(line, w));
+        }
     }
 
     private void renderSettingsPlaceholder(TextGraphics g, int x, int y, int w, int h) {
@@ -375,6 +448,7 @@ public class MainWindow implements TimerListener {
                 new SettingRow("Son",                      c.notification().sound(), false),
                 new SettingRow("Webhook URL",              c.webhook().url().isEmpty() ? "(vide)" : c.webhook().url(), false),
                 new SettingRow("Webhook activé",           c.webhook().enabled() ? "oui" : "non", false),
+                new SettingRow("Tester webhook",           "(Enter pour envoyer test)", false),
                 new SettingRow("Palette",                  c.appearance().palette(), false),
         };
     }
@@ -408,9 +482,25 @@ public class MainWindow implements TimerListener {
             case 12 -> chooseSound();
             case 13 -> editText("Webhook URL (vide pour désactiver)", config.get().webhook().url(), this::withWebhookUrl);
             case 14 -> toggleWebhookEnabled();
-            case 15 -> editText("Palette (default/mono/synthwave)", config.get().appearance().palette(), this::withPalette);
+            case 15 -> testWebhook();
+            case 16 -> editText("Palette (default/mono/synthwave)", config.get().appearance().palette(), this::withPalette);
             default -> {}
         }
+    }
+
+    private void testWebhook() throws IOException {
+        String url = config.get().webhook().url();
+        if (url.isBlank()) {
+            statusMessage = "URL webhook vide.";
+            return;
+        }
+        statusMessage = "Test webhook en cours…";
+        dirty.set(true);
+        new Thread(() -> {
+            GoogleChatWebhook.TestResult result = GoogleChatWebhook.test(url);
+            statusMessage = result.success() ? "Webhook ✓ " + result.message() : "Webhook ✗ " + result.message();
+            dirty.set(true);
+        }, "webhook-test").start();
     }
 
     @FunctionalInterface
@@ -683,7 +773,7 @@ public class MainWindow implements TimerListener {
 
     private void renderHelp(TextGraphics g, int x, int y, int w) {
         g.setForegroundColor(TextColor.ANSI.BLACK_BRIGHT);
-        g.putString(x, y,     "[s] start  [p] pause  [r] reset  [n] skip  [m] auto/manuel");
+        g.putString(x, y,     "[s] start  [p] pause  [r] reset  [n] skip  [m] auto/manuel  [x] export");
         g.putString(x, y + 1, "[a] add  [enter] toggle  [d] del  [space] active  [!] prio  [e] est");
         g.putString(x, y + 2, "[↑↓] nav  [tab/1·2·3] vue  [q] quit");
     }
