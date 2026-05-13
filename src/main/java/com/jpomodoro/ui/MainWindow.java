@@ -12,7 +12,9 @@ import com.jpomodoro.config.AppConfig;
 import com.jpomodoro.config.ConfigService;
 import com.jpomodoro.db.FeedbackRepository;
 import com.jpomodoro.db.SessionRepository;
+import com.jpomodoro.db.SessionView;
 import com.jpomodoro.db.TaskRepository;
+import com.jpomodoro.stats.Sparkline;
 import com.jpomodoro.model.Priority;
 import com.jpomodoro.model.Summary;
 import com.jpomodoro.model.Task;
@@ -24,7 +26,9 @@ import com.jpomodoro.timer.TimerListener;
 import com.jpomodoro.ui.modal.BreakModal;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 
 import java.io.IOException;
@@ -51,6 +55,7 @@ public class MainWindow implements TimerListener {
     private List<Task> tasks;
     private int selectedIndex = 0;
     private int settingIndex = 0;
+    private int historyOffset = 0;
     private Long activeTaskId = null;
     private Tab currentTab = Tab.TIMER;
     private String statusMessage = "Bienvenue. Appuie sur [s] pour démarrer.";
@@ -142,6 +147,12 @@ public class MainWindow implements TimerListener {
                 if (!tasks.isEmpty()) selectedIndex = Math.min(tasks.size() - 1, selectedIndex + 1);
             } else if (key.getKeyType() == KeyType.Enter) {
                 toggleSelectedTask();
+            }
+        } else if (currentTab == Tab.HISTORY) {
+            if (key.getKeyType() == KeyType.ArrowUp) {
+                historyOffset = Math.max(0, historyOffset - 1);
+            } else if (key.getKeyType() == KeyType.ArrowDown) {
+                historyOffset++;
             }
         } else if (currentTab == Tab.SETTINGS) {
             int rows = settingsRowCount();
@@ -324,8 +335,49 @@ public class MainWindow implements TimerListener {
     private void renderHistoryPlaceholder(TextGraphics g, int x, int y, int w, int h) {
         g.setForegroundColor(TextColor.ANSI.WHITE);
         g.putString(x, y, "Historique", SGR.BOLD);
-        g.setForegroundColor(TextColor.ANSI.BLACK_BRIGHT);
-        g.putString(x, y + 2, "(à venir — Phase 7 : sessions + résumés + sparkline 7 jours + streak)");
+
+        LocalDate today = LocalDate.now();
+        int[] counts = sessionRepo.countFocusPerDay(today.minusDays(6), today);
+        String spark = Sparkline.render(counts);
+        int streak = sessionRepo.streakDays();
+        int totalWeek = 0;
+        for (int v : counts) totalWeek += v;
+
+        String header = String.format("7j : %s  ·  %d focus  ·  streak %d j",
+                spark, totalWeek, streak);
+        g.setForegroundColor(TextColor.ANSI.CYAN);
+        g.putString(x, y + 1, header);
+
+        List<SessionView> sessions = sessionRepo.listLast(200);
+        int rows = h - 3;
+        if (rows <= 0) return;
+        if (historyOffset > Math.max(0, sessions.size() - 1)) {
+            historyOffset = Math.max(0, sessions.size() - 1);
+        }
+        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.systemDefault());
+
+        for (int i = 0; i < rows && historyOffset + i < sessions.size(); i++) {
+            SessionView s = sessions.get(historyOffset + i);
+            String when = dtf.format(s.startedAt());
+            String type = switch (s.type()) {
+                case FOCUS -> "FOCUS";
+                case SHORT_BREAK -> "PAUSE";
+                case LONG_BREAK -> "LONG ";
+            };
+            String dur = String.format("%2dm", s.durationSeconds() / 60);
+            String state = s.completed() ? "✓" : "✗";
+            String task = s.taskTitle() == null ? "" : (" · " + truncate(s.taskTitle(), 20));
+            String fb = s.feedback() == null ? "" : (s.feedback() ? "  👍" : "  👎");
+            String preview = s.summary() == null ? "" : ("  ▸ " + truncate(s.summary().replace('\n', ' '), w - 40));
+            String line = String.format(" %s %s  %s  %s%s%s%s", when, type, dur, state, task, fb, preview);
+
+            if (s.type() == com.jpomodoro.timer.SessionType.FOCUS) {
+                g.setForegroundColor(TextColor.ANSI.WHITE);
+            } else {
+                g.setForegroundColor(TextColor.ANSI.BLACK_BRIGHT);
+            }
+            g.putString(x, y + 3 + i, truncate(line, w));
+        }
     }
 
     private void renderSettingsPlaceholder(TextGraphics g, int x, int y, int w, int h) {
