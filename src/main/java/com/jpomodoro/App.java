@@ -14,6 +14,7 @@ import com.jpomodoro.notify.NotifierFactory;
 import com.jpomodoro.notify.SoundPlayer;
 import com.jpomodoro.timer.PomodoroTimer;
 import com.jpomodoro.ui.MainWindow;
+import com.jpomodoro.ui.onboarding.OnboardingFlow;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,6 +39,11 @@ public class App {
 
         Terminal terminal = new DefaultTerminalFactory().createTerminal();
         Screen screen = new TerminalScreen(terminal);
+
+        if (!config.get().onboarded()) {
+            log.info("Onboarding (premier lancement)");
+            OnboardingFlow.run(screen, config);
+        }
 
         MainWindow window = new MainWindow(screen, timer, taskRepo, sessionRepo, config);
         try {
