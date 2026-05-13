@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Wrapper pour lancer JPomodoro.
+# Résout java + chemin du JAR de manière robuste.
+
+set -e
+
+# Chemin du JAR : par défaut relatif au script, override possible via JPOMODORO_JAR.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+JAR="${JPOMODORO_JAR:-$SCRIPT_DIR/../target/pomodoro.jar}"
+
+if [ ! -f "$JAR" ]; then
+    echo "JPomodoro JAR introuvable : $JAR" >&2
+    echo "Build : cd $(dirname "$SCRIPT_DIR") && mvn package -DskipTests" >&2
+    exit 1
+fi
+
+# Résolution de java : JAVA_HOME > Homebrew openjdk > java in PATH
+if [ -n "$JAVA_HOME" ] && [ -x "$JAVA_HOME/bin/java" ]; then
+    JAVA="$JAVA_HOME/bin/java"
+elif [ -x "/opt/homebrew/opt/openjdk/bin/java" ]; then
+    JAVA="/opt/homebrew/opt/openjdk/bin/java"
+elif command -v java >/dev/null 2>&1; then
+    JAVA="$(command -v java)"
+else
+    echo "Aucun Java trouvé. Installe OpenJDK 17+ (brew install openjdk)" >&2
+    exit 1
+fi
+
+exec "$JAVA" -jar "$JAR" "$@"
