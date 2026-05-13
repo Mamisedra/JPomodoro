@@ -135,6 +135,7 @@ public class MainWindow implements TimerListener {
                 case 'n' -> { timer.skip(); statusMessage = "Session passée."; return; }
                 case 'm' -> { toggleScheduleMode(); return; }
                 case 'x' -> { exportCsv(); return; }
+                case '?' -> { showHelp(); return; }
                 default -> {}
             }
             if (currentTab == Tab.TIMER) {
@@ -248,6 +249,35 @@ public class MainWindow implements TimerListener {
             if (tasks.get(i).id() == id) { selectedIndex = i; return; }
         }
         selectedIndex = Math.min(selectedIndex, Math.max(0, tasks.size() - 1));
+    }
+
+    private void showHelp() throws IOException {
+        Modal.info(screen, "Raccourcis JPomodoro", java.util.List.of(
+                "Timer",
+                "  s         démarrer / reprendre",
+                "  p         mettre en pause",
+                "  r         réinitialiser",
+                "  n         passer la session courante",
+                "  m         basculer mode auto ⇄ manuel",
+                "",
+                "Tâches (onglet Timer)",
+                "  a         ajouter une tâche",
+                "  d         supprimer (soft) la tâche sélectionnée",
+                "  espace    activer / désactiver la tâche",
+                "  Enter     cocher / décocher",
+                "  !         cycler la priorité (NORMAL → HIGH → LOW)",
+                "  e         éditer l'estimation en pomodoros",
+                "",
+                "Navigation",
+                "  Tab       onglet suivant",
+                "  1 / 2 / 3 aller à Timer / Historique / Réglages",
+                "  ↑ ↓       naviguer dans la liste",
+                "",
+                "Global",
+                "  x         exporter l'historique en CSV",
+                "  ?         afficher cette aide",
+                "  q         quitter"
+        ));
     }
 
     private void exportCsv() {
@@ -623,7 +653,7 @@ public class MainWindow implements TimerListener {
 
     private void renderBanner(TextGraphics g, int x, int y, int w) {
         int bx = centerX(x, w, Banner.width());
-        g.setForegroundColor(TextColor.ANSI.RED_BRIGHT);
+        g.setForegroundColor(palette().focus());
         Banner.draw(g, bx, y);
         g.setForegroundColor(TextColor.ANSI.BLACK_BRIGHT);
         String tag = Banner.tagline();
@@ -636,10 +666,11 @@ public class MainWindow implements TimerListener {
         int total = timer.totalSeconds();
         PomodoroTimer.State state = timer.state();
 
+        Palette pal = palette();
         TextColor color = switch (type) {
-            case FOCUS -> TextColor.ANSI.RED_BRIGHT;
-            case SHORT_BREAK -> TextColor.ANSI.GREEN_BRIGHT;
-            case LONG_BREAK -> TextColor.ANSI.CYAN_BRIGHT;
+            case FOCUS -> pal.focus();
+            case SHORT_BREAK -> pal.shortBreak();
+            case LONG_BREAK -> pal.longBreak();
         };
 
         String time = formatTime(remaining);
@@ -749,11 +780,16 @@ public class MainWindow implements TimerListener {
         g.putString(x, y + 2, truncate(statusMessage, w));
     }
 
+    private Palette palette() {
+        return PaletteFactory.forName(config.get().appearance().palette());
+    }
+
     private TextColor priorityColor(Priority p) {
+        Palette pal = palette();
         return switch (p) {
-            case HIGH -> TextColor.ANSI.RED_BRIGHT;
+            case HIGH -> pal.focus();
             case NORMAL -> TextColor.ANSI.WHITE;
-            case LOW -> TextColor.ANSI.BLACK_BRIGHT;
+            case LOW -> pal.dim();
         };
     }
 
