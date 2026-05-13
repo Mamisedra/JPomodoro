@@ -14,6 +14,8 @@ import com.jpomodoro.db.FeedbackRepository;
 import com.jpomodoro.db.SessionRepository;
 import com.jpomodoro.db.SessionView;
 import com.jpomodoro.db.TaskRepository;
+import com.jpomodoro.config.AppPaths;
+import com.jpomodoro.export.CsvExporter;
 import com.jpomodoro.stats.Sparkline;
 import com.jpomodoro.model.Priority;
 import com.jpomodoro.model.Summary;
@@ -124,6 +126,7 @@ public class MainWindow implements TimerListener {
                 case 'r' -> { timer.reset(); statusMessage = "Timer réinitialisé."; return; }
                 case 'n' -> { timer.skip(); statusMessage = "Session passée."; return; }
                 case 'm' -> { toggleScheduleMode(); return; }
+                case 'x' -> { exportCsv(); return; }
                 default -> {}
             }
             if (currentTab == Tab.TIMER) {
@@ -237,6 +240,16 @@ public class MainWindow implements TimerListener {
             if (tasks.get(i).id() == id) { selectedIndex = i; return; }
         }
         selectedIndex = Math.min(selectedIndex, Math.max(0, tasks.size() - 1));
+    }
+
+    private void exportCsv() {
+        try {
+            java.nio.file.Path target = CsvExporter.defaultPath(new AppPaths().home());
+            CsvExporter.export(target, sessionRepo.listLast(10_000));
+            statusMessage = "Export → " + target;
+        } catch (Exception e) {
+            statusMessage = "Export échoué : " + e.getMessage();
+        }
     }
 
     private void toggleScheduleMode() {
@@ -735,7 +748,7 @@ public class MainWindow implements TimerListener {
 
     private void renderHelp(TextGraphics g, int x, int y, int w) {
         g.setForegroundColor(TextColor.ANSI.BLACK_BRIGHT);
-        g.putString(x, y,     "[s] start  [p] pause  [r] reset  [n] skip  [m] auto/manuel");
+        g.putString(x, y,     "[s] start  [p] pause  [r] reset  [n] skip  [m] auto/manuel  [x] export");
         g.putString(x, y + 1, "[a] add  [enter] toggle  [d] del  [space] active  [!] prio  [e] est");
         g.putString(x, y + 2, "[↑↓] nav  [tab/1·2·3] vue  [q] quit");
     }
