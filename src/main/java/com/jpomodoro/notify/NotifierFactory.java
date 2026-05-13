@@ -11,6 +11,7 @@ public final class NotifierFactory {
     public static Notifier forOs(String osName) {
         String os = osName == null ? "" : osName.toLowerCase();
         if (os.contains("mac") || os.contains("darwin")) return new MacNotifier();
+        if (os.contains("nux") || os.contains("nix")) return new LinuxNotifier();
         return new NoopNotifier();
     }
 }

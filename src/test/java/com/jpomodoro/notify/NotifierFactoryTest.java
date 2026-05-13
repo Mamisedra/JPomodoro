@@ -13,10 +13,16 @@ class NotifierFactoryTest {
     }
 
     @Test
+    void linuxReturnsLinuxNotifier() {
+        assertThat(NotifierFactory.forOs("Linux")).isInstanceOf(LinuxNotifier.class);
+        assertThat(NotifierFactory.forOs("GNU/Linux")).isInstanceOf(LinuxNotifier.class);
+    }
+
+    @Test
     void unknownReturnsNoop() {
         assertThat(NotifierFactory.forOs("Windows 11")).isInstanceOf(NoopNotifier.class);
-        assertThat(NotifierFactory.forOs("Linux")).isInstanceOf(NoopNotifier.class);
         assertThat(NotifierFactory.forOs(null)).isInstanceOf(NoopNotifier.class);
+        assertThat(NotifierFactory.forOs("")).isInstanceOf(NoopNotifier.class);
     }
 
     @Test
