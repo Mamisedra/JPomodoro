@@ -16,6 +16,7 @@ public class PomodoroTimer {
 
     private final SessionRepository sessions;
     private final ConfigService config;
+    private final Notifier notifier;
     private final ScheduledExecutorService scheduler =
             Executors.newSingleThreadScheduledExecutor(r -> {
                 Thread t = new Thread(r, "pomodoro-timer");
@@ -32,9 +33,10 @@ public class PomodoroTimer {
     private Long activeTaskId = null;
     private ScheduledFuture<?> ticker;
 
-    public PomodoroTimer(SessionRepository sessions, ConfigService config) {
+    public PomodoroTimer(SessionRepository sessions, ConfigService config, Notifier notifier) {
         this.sessions = sessions;
         this.config = config;
+        this.notifier = notifier;
         this.remainingSeconds = timerSettings().secondsFor(SessionType.FOCUS);
     }
 
@@ -157,8 +159,8 @@ public class PomodoroTimer {
             scheduleTicker();
         }
         if (naturalEnd) {
-            if (from == SessionType.FOCUS) Notifier.notifyFocusEnded();
-            else Notifier.notifyBreakEnded();
+            if (from == SessionType.FOCUS) notifier.notifyFocusEnded();
+            else notifier.notifyBreakEnded();
         }
         if (listener != null) {
             listener.onTransition(from, to, cycle);
