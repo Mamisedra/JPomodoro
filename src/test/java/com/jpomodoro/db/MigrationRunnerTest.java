@@ -19,7 +19,9 @@ class MigrationRunnerTest {
             assertThat(tableExists(conn, "tasks")).isTrue();
             assertThat(tableExists(conn, "sessions")).isTrue();
             assertThat(tableExists(conn, "schema_migrations")).isTrue();
-            assertThat(versionsApplied(conn)).contains(1, 2);
+            assertThat(versionsApplied(conn)).contains(1, 2, 3);
+            assertThat(tableExists(conn, "summaries")).isTrue();
+            assertThat(tableExists(conn, "feedback_entries")).isTrue();
         }
     }
 
