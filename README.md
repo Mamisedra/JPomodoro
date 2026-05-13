@@ -65,9 +65,43 @@ Fichier TOML : `~/.pomodoro/config.toml`. Sections :
 
 ## IA Ollama
 
-Si Ollama tourne en local (`ollama serve`) et un modèle est pull (`ollama pull qwen2.5:7b`), JPomodoro génère automatiquement un résumé de chaque focus en lisant les JSONL de `~/.claude/projects/`. Affiché en modal à la pause avec feedback 👍/👎.
+Si Ollama tourne en local (`ollama serve` ou Ollama.app) et un modèle est pull, JPomodoro génère automatiquement un résumé de chaque focus en lisant les JSONL de `~/.claude/projects/`. Affiché en modal à la pause avec feedback 👍/👎.
 
 Désactivable via Réglages → "IA activée".
+
+### Modèles recommandés (rapidité ↔ qualité)
+
+| Modèle | Pull | RAM | Vitesse | Note |
+|---|---|---|---|---|
+| `llama3.2:3b` ⭐ | `ollama pull llama3.2:3b` | ~2 GB | rapide | Meilleur compromis fr |
+| `gemma2:2b` | `ollama pull gemma2:2b` | ~1.5 GB | très rapide | Google, ultra léger |
+| `qwen2.5:7b` | `ollama pull qwen2.5:7b` | ~5 GB | lent | Qualité max |
+| `phi3.5` | `ollama pull phi3.5` | ~2.5 GB | moyen | Microsoft, factuel |
+
+Sélection dans Réglages → "Modèle IA".
+
+### Stocker les modèles sur un disque externe
+
+Modèles Ollama dans `~/.ollama/models/`. Pour économiser l'espace SSD :
+
+```bash
+# 1. Quitter Ollama (icône menubar → Quit, ou kill processes)
+pkill -f Ollama
+
+# 2. Déplacer vers disque externe
+mkdir -p /Volumes/DD-2/ollama-models
+mv ~/.ollama/models/* /Volumes/DD-2/ollama-models/
+rmdir ~/.ollama/models
+ln -s /Volumes/DD-2/ollama-models ~/.ollama/models
+
+# 3. Relancer Ollama
+open -a Ollama
+ollama list  # vérifie modèles toujours visibles
+```
+
+Note : 1er appel après restart est lent (load modèle depuis USB ~30-50s). Appels suivants rapides (≤ 1s) grâce au keep-alive Ollama.
+
+Si DD-2 démonté → Ollama ne trouve plus les modèles. Re-mount avant `pomodoro`.
 
 ## Notifications
 
