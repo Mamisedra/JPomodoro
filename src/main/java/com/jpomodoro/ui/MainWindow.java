@@ -1,17 +1,19 @@
 package com.jpomodoro.ui;
 
 import com.googlecode.lanterna.SGR;
-import com.googlecode.lanterna.TerminalPosition;
 import com.googlecode.lanterna.TerminalSize;
 import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.graphics.TextGraphics;
 import com.googlecode.lanterna.input.KeyStroke;
 import com.googlecode.lanterna.input.KeyType;
 import com.googlecode.lanterna.screen.Screen;
+import com.jpomodoro.config.AppConfig;
+import com.jpomodoro.config.ConfigService;
 import com.jpomodoro.db.SessionRepository;
 import com.jpomodoro.db.TaskRepository;
 import com.jpomodoro.model.Priority;
 import com.jpomodoro.model.Task;
+import com.jpomodoro.notify.SoundPlayer;
 import com.jpomodoro.schedule.ScheduleMode;
 import com.jpomodoro.timer.PomodoroTimer;
 import com.jpomodoro.timer.SessionType;
@@ -26,28 +28,30 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainWindow implements TimerListener {
 
-    private enum FocusZone { TIMER, TASKS }
-
     private final Screen screen;
     private final PomodoroTimer timer;
     private final TaskRepository taskRepo;
     private final SessionRepository sessionRepo;
+    private final ConfigService config;
 
     private final AtomicBoolean dirty = new AtomicBoolean(true);
     private volatile boolean running = true;
 
     private List<Task> tasks;
     private int selectedIndex = 0;
+    private int settingIndex = 0;
     private Long activeTaskId = null;
-    private FocusZone focusZone = FocusZone.TIMER;
+    private Tab currentTab = Tab.TIMER;
     private String statusMessage = "Bienvenue. Appuie sur [s] pour démarrer.";
 
     public MainWindow(Screen screen, PomodoroTimer timer,
-                      TaskRepository taskRepo, SessionRepository sessionRepo) {
+                      TaskRepository taskRepo, SessionRepository sessionRepo,
+                      ConfigService config) {
         this.screen = screen;
         this.timer = timer;
         this.taskRepo = taskRepo;
         this.sessionRepo = sessionRepo;
+        this.config = config;
         this.tasks = taskRepo.listOpen();
         this.timer.setListener(this);
     }
@@ -78,30 +82,52 @@ public class MainWindow implements TimerListener {
         Character ch = key.getCharacter();
 
         if (ch != null) {
+            switch (ch) {
+                case '1' -> { currentTab = Tab.TIMER; return; }
+                case '2' -> { currentTab = Tab.HISTORY; return; }
+                case '3' -> { currentTab = Tab.SETTINGS; return; }
+                default -> {}
+            }
             switch (Character.toLowerCase(ch)) {
                 case 'q' -> { running = false; return; }
                 case 's' -> { timer.start(); statusMessage = "Timer démarré."; return; }
                 case 'p' -> { timer.pause(); statusMessage = "Timer en pause."; return; }
                 case 'r' -> { timer.reset(); statusMessage = "Timer réinitialisé."; return; }
                 case 'n' -> { timer.skip(); statusMessage = "Session passée."; return; }
-                case 'a' -> { promptAddTask(); return; }
-                case 'd' -> { deleteSelectedTask(); return; }
-                case ' ' -> { setActiveSelectedTask(); return; }
                 case 'm' -> { toggleScheduleMode(); return; }
-                case '!' -> { cyclePrioritySelected(); return; }
-                case 'e' -> { editEstimateSelected(); return; }
                 default -> {}
+            }
+            if (currentTab == Tab.TIMER) {
+                switch (Character.toLowerCase(ch)) {
+                    case 'a' -> { promptAddTask(); return; }
+                    case 'd' -> { deleteSelectedTask(); return; }
+                    case ' ' -> { setActiveSelectedTask(); return; }
+                    case '!' -> { cyclePrioritySelected(); return; }
+                    case 'e' -> { editEstimateSelected(); return; }
+                    default -> {}
+                }
             }
         }
 
         if (key.getKeyType() == KeyType.Tab) {
-            focusZone = (focusZone == FocusZone.TIMER) ? FocusZone.TASKS : FocusZone.TIMER;
-        } else if (key.getKeyType() == KeyType.ArrowUp) {
-            if (!tasks.isEmpty()) selectedIndex = Math.max(0, selectedIndex - 1);
-        } else if (key.getKeyType() == KeyType.ArrowDown) {
-            if (!tasks.isEmpty()) selectedIndex = Math.min(tasks.size() - 1, selectedIndex + 1);
-        } else if (key.getKeyType() == KeyType.Enter) {
-            toggleSelectedTask();
+            currentTab = currentTab.next();
+        } else if (currentTab == Tab.TIMER) {
+            if (key.getKeyType() == KeyType.ArrowUp) {
+                if (!tasks.isEmpty()) selectedIndex = Math.max(0, selectedIndex - 1);
+            } else if (key.getKeyType() == KeyType.ArrowDown) {
+                if (!tasks.isEmpty()) selectedIndex = Math.min(tasks.size() - 1, selectedIndex + 1);
+            } else if (key.getKeyType() == KeyType.Enter) {
+                toggleSelectedTask();
+            }
+        } else if (currentTab == Tab.SETTINGS) {
+            int rows = settingsRowCount();
+            if (key.getKeyType() == KeyType.ArrowUp) {
+                settingIndex = (settingIndex - 1 + rows) % rows;
+            } else if (key.getKeyType() == KeyType.ArrowDown) {
+                settingIndex = (settingIndex + 1) % rows;
+            } else if (key.getKeyType() == KeyType.Enter) {
+                editSetting(settingIndex);
+            }
         }
     }
 
@@ -217,32 +243,268 @@ public class MainWindow implements TimerListener {
 
         drawBorder(g, 0, 0, width, height, "");
 
-        int bannerHeight = Banner.HEIGHT + 1; // 3 banner lines + 1 tagline
-        int timerHeight = 11;
+        int bannerHeight = Banner.HEIGHT + 1;
+        int tabsHeight = 1;
         int statsHeight = 3;
         int helpHeight = 4;
 
         int bannerY = 1;
         int sep1Y = bannerY + bannerHeight;
-        int timerY = sep1Y + 1;
-        int sep2Y = timerY + timerHeight;
-        int tasksY = sep2Y + 1;
+        int tabsY = sep1Y + 1;
+        int sep2Y = tabsY + tabsHeight;
+        int contentY = sep2Y + 1;
         int sep4Y = height - helpHeight - 1;
         int statsY = sep4Y - statsHeight;
         int sep3Y = statsY - 1;
-        int tasksHeight = sep3Y - tasksY;
+        int contentHeight = sep3Y - contentY;
 
         renderBanner(g, 1, bannerY, width - 2);
         drawHorizontal(g, 0, sep1Y, width);
-        renderTimer(g, 1, timerY, width - 2, timerHeight);
+        renderTabs(g, 1, tabsY, width - 2);
         drawHorizontal(g, 0, sep2Y, width);
-        renderTasks(g, 1, tasksY, width - 2, tasksHeight);
+
+        switch (currentTab) {
+            case TIMER -> renderTimerTab(g, 1, contentY, width - 2, contentHeight);
+            case HISTORY -> renderHistoryPlaceholder(g, 1, contentY, width - 2, contentHeight);
+            case SETTINGS -> renderSettingsPlaceholder(g, 1, contentY, width - 2, contentHeight);
+        }
+
         drawHorizontal(g, 0, sep3Y, width);
         renderStats(g, 1, statsY, width - 2, statsHeight);
         drawHorizontal(g, 0, sep4Y, width);
         renderHelp(g, 1, height - helpHeight, width - 2);
 
         screen.refresh();
+    }
+
+    private void renderTabs(TextGraphics g, int x, int y, int w) {
+        StringBuilder sb = new StringBuilder();
+        for (Tab t : Tab.values()) {
+            sb.append("  ");
+            sb.append(t == currentTab ? "▶ " : "  ");
+            sb.append("[").append(t.ordinal() + 1).append("] ").append(t.label());
+        }
+        String line = sb.toString();
+        g.setForegroundColor(TextColor.ANSI.WHITE);
+        g.putString(centerX(x, w, line.length()), y, line);
+    }
+
+    private void renderTimerTab(TextGraphics g, int x, int y, int w, int h) {
+        int timerHeight = Math.min(11, h - 4);
+        renderTimer(g, x, y, w, timerHeight);
+        int sepY = y + timerHeight;
+        drawHorizontal(g, x - 1, sepY, w + 2);
+        renderTasks(g, x, sepY + 1, w, h - timerHeight - 1);
+    }
+
+    private void renderHistoryPlaceholder(TextGraphics g, int x, int y, int w, int h) {
+        g.setForegroundColor(TextColor.ANSI.WHITE);
+        g.putString(x, y, "Historique", SGR.BOLD);
+        g.setForegroundColor(TextColor.ANSI.BLACK_BRIGHT);
+        g.putString(x, y + 2, "(à venir — Phase 7 : sessions + résumés + sparkline 7 jours + streak)");
+    }
+
+    private void renderSettingsPlaceholder(TextGraphics g, int x, int y, int w, int h) {
+        g.setForegroundColor(TextColor.ANSI.WHITE);
+        g.putString(x, y, "Réglages", SGR.BOLD);
+        g.setForegroundColor(TextColor.ANSI.BLACK_BRIGHT);
+        g.putString(x, y + 1, "[↑↓] naviguer · [Enter] éditer");
+
+        AppConfig c = config.get();
+        SettingRow[] rows = settingsRows(c);
+        int startY = y + 3;
+        int max = Math.min(rows.length, h - 4);
+        for (int i = 0; i < max; i++) {
+            SettingRow row = rows[i];
+            String line = String.format(" %-32s %s", row.label, row.value);
+            if (i == settingIndex) {
+                g.setForegroundColor(TextColor.ANSI.BLACK);
+                g.setBackgroundColor(TextColor.ANSI.WHITE);
+            } else if (row.section) {
+                g.setForegroundColor(TextColor.ANSI.YELLOW);
+                g.setBackgroundColor(TextColor.ANSI.DEFAULT);
+            } else {
+                g.setForegroundColor(TextColor.ANSI.WHITE);
+                g.setBackgroundColor(TextColor.ANSI.DEFAULT);
+            }
+            g.putString(x, startY + i, padRight(line, w));
+        }
+        g.setBackgroundColor(TextColor.ANSI.DEFAULT);
+    }
+
+    private record SettingRow(String label, String value, boolean section) {}
+
+    private SettingRow[] settingsRows(AppConfig c) {
+        return new SettingRow[] {
+                new SettingRow("Durée focus (min)",        String.valueOf(c.timer().focusMinutes()), false),
+                new SettingRow("Pause courte (min)",       String.valueOf(c.timer().shortBreakMinutes()), false),
+                new SettingRow("Pause longue (min)",       String.valueOf(c.timer().longBreakMinutes()), false),
+                new SettingRow("Cycles avant pause longue", String.valueOf(c.timer().cyclesBeforeLongBreak()), false),
+                new SettingRow("Matin début",              c.schedule().morningStart(), false),
+                new SettingRow("Matin fin",                c.schedule().morningEnd(), false),
+                new SettingRow("Après-midi début",         c.schedule().afternoonStart(), false),
+                new SettingRow("Après-midi fin",           c.schedule().afternoonEnd(), false),
+                new SettingRow("IA activée",               c.ai().enabled() ? "oui" : "non", false),
+                new SettingRow("Modèle IA",                c.ai().model(), false),
+                new SettingRow("Endpoint Ollama",          c.ai().endpoint(), false),
+                new SettingRow("Notifications activées",   c.notification().enabled() ? "oui" : "non", false),
+                new SettingRow("Son",                      c.notification().sound(), false),
+                new SettingRow("Webhook URL",              c.webhook().url().isEmpty() ? "(vide)" : c.webhook().url(), false),
+                new SettingRow("Webhook activé",           c.webhook().enabled() ? "oui" : "non", false),
+                new SettingRow("Palette",                  c.appearance().palette(), false),
+        };
+    }
+
+    private int settingsRowCount() {
+        return settingsRows(config.get()).length;
+    }
+
+    private void editSetting(int index) throws IOException {
+        switch (index) {
+            case 0 -> editTimerMinutes("Durée focus (min)", c -> c.timer().focusMinutes(),
+                    (c, v) -> withFocus(c, v));
+            case 1 -> editTimerMinutes("Pause courte (min)", c -> c.timer().shortBreakMinutes(),
+                    (c, v) -> withShortBreak(c, v));
+            case 2 -> editTimerMinutes("Pause longue (min)", c -> c.timer().longBreakMinutes(),
+                    (c, v) -> withLongBreak(c, v));
+            case 3 -> editTimerMinutes("Cycles avant pause longue", c -> c.timer().cyclesBeforeLongBreak(),
+                    (c, v) -> withCycles(c, v));
+            case 4 -> editTime("Matin début (HH:mm)", c -> c.schedule().morningStart(),
+                    (c, v) -> withSchedule(c, v, c.schedule().morningEnd(), c.schedule().afternoonStart(), c.schedule().afternoonEnd()));
+            case 5 -> editTime("Matin fin (HH:mm)", c -> c.schedule().morningEnd(),
+                    (c, v) -> withSchedule(c, c.schedule().morningStart(), v, c.schedule().afternoonStart(), c.schedule().afternoonEnd()));
+            case 6 -> editTime("Après-midi début (HH:mm)", c -> c.schedule().afternoonStart(),
+                    (c, v) -> withSchedule(c, c.schedule().morningStart(), c.schedule().morningEnd(), v, c.schedule().afternoonEnd()));
+            case 7 -> editTime("Après-midi fin (HH:mm)", c -> c.schedule().afternoonEnd(),
+                    (c, v) -> withSchedule(c, c.schedule().morningStart(), c.schedule().morningEnd(), c.schedule().afternoonStart(), v));
+            case 8 -> toggleAiEnabled();
+            case 9 -> editText("Modèle IA", config.get().ai().model(), this::withAiModel);
+            case 10 -> editText("Endpoint Ollama", config.get().ai().endpoint(), this::withAiEndpoint);
+            case 11 -> toggleNotificationsEnabled();
+            case 12 -> chooseSound();
+            case 13 -> editText("Webhook URL (vide pour désactiver)", config.get().webhook().url(), this::withWebhookUrl);
+            case 14 -> toggleWebhookEnabled();
+            case 15 -> editText("Palette (default/mono/synthwave)", config.get().appearance().palette(), this::withPalette);
+            default -> {}
+        }
+    }
+
+    @FunctionalInterface
+    private interface IntGetter { int get(AppConfig c); }
+    @FunctionalInterface
+    private interface StringGetter { String get(AppConfig c); }
+    @FunctionalInterface
+    private interface IntApplier { AppConfig apply(AppConfig c, int v); }
+    @FunctionalInterface
+    private interface StringApplier { AppConfig apply(AppConfig c, String v); }
+
+    private void editTimerMinutes(String label, IntGetter getter, IntApplier applier) throws IOException {
+        String raw = Modal.readLine(screen, label + " : ", String.valueOf(getter.get(config.get())));
+        if (raw == null) return;
+        int v;
+        try {
+            v = Integer.parseInt(raw.trim());
+            if (v <= 0) throw new NumberFormatException();
+        } catch (NumberFormatException e) {
+            statusMessage = "Valeur invalide.";
+            return;
+        }
+        config.update(c -> applier.apply(c, v));
+        statusMessage = label + " = " + v;
+    }
+
+    private void editTime(String label, StringGetter getter, StringApplier applier) throws IOException {
+        String raw = Modal.readLine(screen, label + " : ", getter.get(config.get()));
+        if (raw == null || raw.isBlank()) return;
+        try {
+            java.time.LocalTime.parse(raw.trim());
+        } catch (Exception e) {
+            statusMessage = "Format invalide (HH:mm attendu).";
+            return;
+        }
+        config.update(c -> applier.apply(c, raw.trim()));
+        statusMessage = label + " = " + raw.trim();
+    }
+
+    private void editText(String label, String current, StringApplier applier) throws IOException {
+        String raw = Modal.readLine(screen, label + " : ", current);
+        if (raw == null) return;
+        config.update(c -> applier.apply(c, raw));
+        statusMessage = label + " mis à jour.";
+    }
+
+    private void toggleAiEnabled() {
+        config.update(c -> new AppConfig(c.timer(), c.schedule(),
+                new AppConfig.AiSettings(!c.ai().enabled(), c.ai().model(), c.ai().endpoint(), c.ai().timeoutSeconds()),
+                c.notification(), c.webhook(), c.appearance(), c.onboarded()));
+        statusMessage = "IA " + (config.get().ai().enabled() ? "activée" : "désactivée") + ".";
+    }
+
+    private void toggleNotificationsEnabled() {
+        config.update(c -> new AppConfig(c.timer(), c.schedule(), c.ai(),
+                new AppConfig.NotificationSettings(!c.notification().enabled(), c.notification().sound()),
+                c.webhook(), c.appearance(), c.onboarded()));
+        statusMessage = "Notifications " + (config.get().notification().enabled() ? "activées" : "désactivées") + ".";
+    }
+
+    private void toggleWebhookEnabled() {
+        config.update(c -> new AppConfig(c.timer(), c.schedule(), c.ai(), c.notification(),
+                new AppConfig.WebhookSettings(c.webhook().url(), !c.webhook().enabled()),
+                c.appearance(), c.onboarded()));
+        statusMessage = "Webhook " + (config.get().webhook().enabled() ? "activé" : "désactivé") + ".";
+    }
+
+    private void chooseSound() throws IOException {
+        java.util.List<String> options = new java.util.ArrayList<>(SoundPlayer.presets());
+        java.util.Collections.sort(options);
+        options.add("none");
+        java.util.Optional<Integer> picked = Modal.choose(screen, "Son notification", options);
+        if (picked.isEmpty()) return;
+        String value = options.get(picked.get());
+        config.update(c -> new AppConfig(c.timer(), c.schedule(), c.ai(),
+                new AppConfig.NotificationSettings(c.notification().enabled(), value),
+                c.webhook(), c.appearance(), c.onboarded()));
+        statusMessage = "Son : " + value;
+    }
+
+    private AppConfig withFocus(AppConfig c, int v) {
+        return withTimer(c, new AppConfig.TimerSettings(v, c.timer().shortBreakMinutes(), c.timer().longBreakMinutes(), c.timer().cyclesBeforeLongBreak()));
+    }
+    private AppConfig withShortBreak(AppConfig c, int v) {
+        return withTimer(c, new AppConfig.TimerSettings(c.timer().focusMinutes(), v, c.timer().longBreakMinutes(), c.timer().cyclesBeforeLongBreak()));
+    }
+    private AppConfig withLongBreak(AppConfig c, int v) {
+        return withTimer(c, new AppConfig.TimerSettings(c.timer().focusMinutes(), c.timer().shortBreakMinutes(), v, c.timer().cyclesBeforeLongBreak()));
+    }
+    private AppConfig withCycles(AppConfig c, int v) {
+        return withTimer(c, new AppConfig.TimerSettings(c.timer().focusMinutes(), c.timer().shortBreakMinutes(), c.timer().longBreakMinutes(), v));
+    }
+    private AppConfig withTimer(AppConfig c, AppConfig.TimerSettings t) {
+        return new AppConfig(t, c.schedule(), c.ai(), c.notification(), c.webhook(), c.appearance(), c.onboarded());
+    }
+    private AppConfig withSchedule(AppConfig c, String ms, String me, String as, String ae) {
+        return new AppConfig(c.timer(),
+                new AppConfig.ScheduleSettings(ms, me, as, ae, c.schedule().mode()),
+                c.ai(), c.notification(), c.webhook(), c.appearance(), c.onboarded());
+    }
+    private AppConfig withAiModel(AppConfig c, String v) {
+        return new AppConfig(c.timer(), c.schedule(),
+                new AppConfig.AiSettings(c.ai().enabled(), v, c.ai().endpoint(), c.ai().timeoutSeconds()),
+                c.notification(), c.webhook(), c.appearance(), c.onboarded());
+    }
+    private AppConfig withAiEndpoint(AppConfig c, String v) {
+        return new AppConfig(c.timer(), c.schedule(),
+                new AppConfig.AiSettings(c.ai().enabled(), c.ai().model(), v, c.ai().timeoutSeconds()),
+                c.notification(), c.webhook(), c.appearance(), c.onboarded());
+    }
+    private AppConfig withWebhookUrl(AppConfig c, String v) {
+        return new AppConfig(c.timer(), c.schedule(), c.ai(), c.notification(),
+                new AppConfig.WebhookSettings(v, c.webhook().enabled()),
+                c.appearance(), c.onboarded());
+    }
+    private AppConfig withPalette(AppConfig c, String v) {
+        return new AppConfig(c.timer(), c.schedule(), c.ai(), c.notification(), c.webhook(),
+                new AppConfig.AppearanceSettings(v), c.onboarded());
     }
 
     private void renderBanner(TextGraphics g, int x, int y, int w) {
@@ -305,10 +567,8 @@ public class MainWindow implements TimerListener {
     }
 
     private void renderTasks(TextGraphics g, int x, int y, int w, int h) {
-        boolean focused = focusZone == FocusZone.TASKS;
-        g.setForegroundColor(focused ? TextColor.ANSI.WHITE_BRIGHT : TextColor.ANSI.WHITE);
-        String title = "Tâches" + (focused ? " ◀" : "");
-        g.putString(x, y, title, SGR.BOLD);
+        g.setForegroundColor(TextColor.ANSI.WHITE_BRIGHT);
+        g.putString(x, y, "Tâches", SGR.BOLD);
 
         if (tasks.isEmpty()) {
             g.setForegroundColor(TextColor.ANSI.WHITE);
@@ -333,7 +593,7 @@ public class MainWindow implements TimerListener {
                     + truncate(t.title(), Math.max(4, w - 24))
                     + estimateTag + activeTag;
 
-            if (isSelected && focused) {
+            if (isSelected) {
                 g.setForegroundColor(TextColor.ANSI.BLACK);
                 g.setBackgroundColor(TextColor.ANSI.WHITE);
             } else if (t.done()) {
@@ -399,9 +659,9 @@ public class MainWindow implements TimerListener {
 
     private void renderHelp(TextGraphics g, int x, int y, int w) {
         g.setForegroundColor(TextColor.ANSI.BLACK_BRIGHT);
-        g.putString(x, y,     "[s] start   [p] pause   [r] reset   [n] skip   [m] auto/manuel");
+        g.putString(x, y,     "[s] start  [p] pause  [r] reset  [n] skip  [m] auto/manuel");
         g.putString(x, y + 1, "[a] add  [enter] toggle  [d] del  [space] active  [!] prio  [e] est");
-        g.putString(x, y + 2, "[↑↓] nav    [tab] zone   [q] quit");
+        g.putString(x, y + 2, "[↑↓] nav  [tab/1·2·3] vue  [q] quit");
     }
 
     // --- helpers ---
@@ -448,48 +708,7 @@ public class MainWindow implements TimerListener {
     }
 
     private String readLineModal(String prompt) throws IOException {
-        TerminalSize size = screen.getTerminalSize();
-        int boxW = Math.min(size.getColumns() - 4, 60);
-        int boxH = 5;
-        int x = (size.getColumns() - boxW) / 2;
-        int y = (size.getRows() - boxH) / 2;
-
-        TextGraphics g = screen.newTextGraphics();
-        g.setBackgroundColor(TextColor.ANSI.BLACK);
-        for (int i = 0; i < boxH; i++) {
-            g.putString(x, y + i, padRight("", boxW));
-        }
-        drawBorder(g, x, y, boxW, boxH, " Saisie ");
-        g.setForegroundColor(TextColor.ANSI.WHITE);
-        g.putString(x + 2, y + 1, prompt);
-        screen.refresh();
-
-        StringBuilder sb = new StringBuilder();
-        int inputX = x + 2 + prompt.length();
-        int inputY = y + 2;
-        int maxLen = boxW - 4;
-        screen.setCursorPosition(new TerminalPosition(inputX, inputY));
-
-        while (true) {
-            KeyStroke k = screen.readInput();
-            if (k.getKeyType() == KeyType.Escape) {
-                screen.setCursorPosition(null);
-                return null;
-            }
-            if (k.getKeyType() == KeyType.Enter) {
-                screen.setCursorPosition(null);
-                return sb.toString();
-            }
-            if (k.getKeyType() == KeyType.Backspace && sb.length() > 0) {
-                sb.deleteCharAt(sb.length() - 1);
-            } else if (k.getCharacter() != null && sb.length() < maxLen) {
-                sb.append(k.getCharacter());
-            }
-            g.setForegroundColor(TextColor.ANSI.WHITE);
-            g.putString(x + 2, inputY, padRight(sb.toString(), maxLen));
-            screen.setCursorPosition(new TerminalPosition(inputX + Math.min(sb.length(), maxLen - prompt.length()), inputY));
-            screen.refresh();
-        }
+        return Modal.readLine(screen, prompt, "");
     }
 
     // --- TimerListener ---
