@@ -1,5 +1,6 @@
 package com.jpomodoro.db;
 
+import com.jpomodoro.model.Priority;
 import com.jpomodoro.model.Task;
 
 import java.sql.Connection;
@@ -23,7 +24,7 @@ public class TaskRepository {
             ps.executeUpdate();
             try (ResultSet keys = ps.getGeneratedKeys()) {
                 keys.next();
-                return new Task(keys.getLong(1), title, false, now, null);
+                return new Task(keys.getLong(1), title, false, Priority.NORMAL, null, now, null, null);
             }
         } catch (SQLException e) {
             throw new RuntimeException(e);
@@ -31,19 +32,29 @@ public class TaskRepository {
     }
 
     public List<Task> listOpen() {
-        String sql = "SELECT id, title, done, created_at, completed_at FROM tasks ORDER BY done ASC, id ASC";
+        String sql = """
+            SELECT id, title, done, priority, estimated_pomodoros, created_at, completed_at, deleted_at
+            FROM tasks
+            ORDER BY done ASC, id ASC
+            """;
         List<Task> out = new ArrayList<>();
         Connection c = Database.get();
         try (PreparedStatement ps = c.prepareStatement(sql);
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
                 String completed = rs.getString("completed_at");
+                String deleted = rs.getString("deleted_at");
+                int est = rs.getInt("estimated_pomodoros");
+                Integer estimated = rs.wasNull() ? null : est;
                 out.add(new Task(
                         rs.getLong("id"),
                         rs.getString("title"),
                         rs.getInt("done") == 1,
+                        Priority.parse(rs.getString("priority")),
+                        estimated,
                         Instant.parse(rs.getString("created_at")),
-                        completed != null ? Instant.parse(completed) : null
+                        completed != null ? Instant.parse(completed) : null,
+                        deleted != null ? Instant.parse(deleted) : null
                 ));
             }
             return out;

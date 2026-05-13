@@ -1,6 +1,7 @@
 package com.jpomodoro.db;
 
 import com.jpomodoro.db.migrations.V1__initial_schema;
+import com.jpomodoro.db.migrations.V2__task_extensions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -20,7 +21,8 @@ public final class MigrationRunner {
     private static final Logger log = LoggerFactory.getLogger(MigrationRunner.class);
 
     private static final List<Migration> ALL = List.of(
-            new V1__initial_schema()
+            new V1__initial_schema(),
+            new V2__task_extensions()
     );
 
     private MigrationRunner() {}
