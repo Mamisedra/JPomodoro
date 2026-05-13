@@ -28,6 +28,7 @@ public final class BreakModal {
         boolean done = false;
 
         while (true) {
+            screen.clear();
             TerminalSize size = screen.getTerminalSize();
             int boxW = Math.min(size.getColumns() - 4, 80);
             int boxH = Math.min(size.getRows() - 4, 14);
