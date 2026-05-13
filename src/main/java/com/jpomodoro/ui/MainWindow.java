@@ -26,6 +26,7 @@ import com.jpomodoro.timer.PomodoroTimer;
 import com.jpomodoro.timer.SessionType;
 import com.jpomodoro.timer.TimerListener;
 import com.jpomodoro.ui.modal.BreakModal;
+import com.jpomodoro.webhook.GoogleChatWebhook;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -104,6 +105,13 @@ public class MainWindow implements TimerListener {
 
     private void showBreakModal(PendingBreak pb) throws IOException {
         CompletableFuture<Optional<Summary>> future = summaryService.summarizeAsync(pb.sessionId(), pb.from(), pb.to());
+        future.whenComplete((opt, err) -> {
+            if (opt == null || opt.isEmpty()) return;
+            AppConfig.WebhookSettings w = config.get().webhook();
+            if (w.enabled() && !w.url().isBlank()) {
+                GoogleChatWebhook.sendSummary(w.url(), opt.get());
+            }
+        });
         BreakModal.open(screen, future, feedbackRepo);
         dirty.set(true);
     }
@@ -440,6 +448,7 @@ public class MainWindow implements TimerListener {
                 new SettingRow("Son",                      c.notification().sound(), false),
                 new SettingRow("Webhook URL",              c.webhook().url().isEmpty() ? "(vide)" : c.webhook().url(), false),
                 new SettingRow("Webhook activé",           c.webhook().enabled() ? "oui" : "non", false),
+                new SettingRow("Tester webhook",           "(Enter pour envoyer test)", false),
                 new SettingRow("Palette",                  c.appearance().palette(), false),
         };
     }
@@ -473,9 +482,25 @@ public class MainWindow implements TimerListener {
             case 12 -> chooseSound();
             case 13 -> editText("Webhook URL (vide pour désactiver)", config.get().webhook().url(), this::withWebhookUrl);
             case 14 -> toggleWebhookEnabled();
-            case 15 -> editText("Palette (default/mono/synthwave)", config.get().appearance().palette(), this::withPalette);
+            case 15 -> testWebhook();
+            case 16 -> editText("Palette (default/mono/synthwave)", config.get().appearance().palette(), this::withPalette);
             default -> {}
         }
+    }
+
+    private void testWebhook() throws IOException {
+        String url = config.get().webhook().url();
+        if (url.isBlank()) {
+            statusMessage = "URL webhook vide.";
+            return;
+        }
+        statusMessage = "Test webhook en cours…";
+        dirty.set(true);
+        new Thread(() -> {
+            GoogleChatWebhook.TestResult result = GoogleChatWebhook.test(url);
+            statusMessage = result.success() ? "Webhook ✓ " + result.message() : "Webhook ✗ " + result.message();
+            dirty.set(true);
+        }, "webhook-test").start();
     }
 
     @FunctionalInterface
