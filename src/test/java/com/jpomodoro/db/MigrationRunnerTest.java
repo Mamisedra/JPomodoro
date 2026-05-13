@@ -12,14 +12,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 class MigrationRunnerTest {
 
     @Test
-    void appliesV1OnFreshDb() throws Exception {
+    void appliesAllMigrationsOnFreshDb() throws Exception {
         try (Connection conn = DriverManager.getConnection("jdbc:sqlite::memory:")) {
             MigrationRunner.run(conn);
 
             assertThat(tableExists(conn, "tasks")).isTrue();
             assertThat(tableExists(conn, "sessions")).isTrue();
             assertThat(tableExists(conn, "schema_migrations")).isTrue();
-            assertThat(versionsApplied(conn)).contains(1);
+            assertThat(versionsApplied(conn)).contains(1, 2);
         }
     }
 
@@ -27,9 +27,11 @@ class MigrationRunnerTest {
     void isIdempotent() throws Exception {
         try (Connection conn = DriverManager.getConnection("jdbc:sqlite::memory:")) {
             MigrationRunner.run(conn);
+            int after1 = rowCount(conn, "schema_migrations");
             MigrationRunner.run(conn);
+            int after2 = rowCount(conn, "schema_migrations");
 
-            assertThat(rowCount(conn, "schema_migrations")).isEqualTo(1);
+            assertThat(after2).isEqualTo(after1);
         }
     }
 
