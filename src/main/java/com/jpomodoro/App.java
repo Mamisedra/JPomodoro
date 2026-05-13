@@ -19,6 +19,7 @@ import com.jpomodoro.notify.SoundPlayer;
 import com.jpomodoro.timer.PomodoroTimer;
 import com.jpomodoro.ui.MainWindow;
 import com.jpomodoro.ui.onboarding.OnboardingFlow;
+import com.jpomodoro.util.LockFile;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -32,6 +33,16 @@ public class App {
     public static void main(String[] args) throws Exception {
         AppPaths paths = new AppPaths();
         paths.ensureDirectories();
+
+        LockFile lock;
+        try {
+            lock = LockFile.acquire(paths.lock());
+        } catch (LockFile.LockUnavailableException e) {
+            System.err.println("JPomodoro est déjà lancé. Ferme l'autre instance ou supprime "
+                    + paths.lock() + " si elle est orpheline.");
+            System.exit(1);
+            return;
+        }
 
         ConfigService config = new ConfigService(paths);
         log.info("JPomodoro démarrage — config : {}", paths.config());
@@ -70,6 +81,7 @@ public class App {
             timer.shutdown();
             aiExecutor.shutdownNow();
             screen.close();
+            lock.close();
             log.info("JPomodoro arrêt propre");
         }
     }
