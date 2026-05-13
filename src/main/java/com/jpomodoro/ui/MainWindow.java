@@ -8,7 +8,6 @@ import com.googlecode.lanterna.graphics.TextGraphics;
 import com.googlecode.lanterna.input.KeyStroke;
 import com.googlecode.lanterna.input.KeyType;
 import com.googlecode.lanterna.screen.Screen;
-import com.jpomodoro.config.Config;
 import com.jpomodoro.db.SessionRepository;
 import com.jpomodoro.db.TaskRepository;
 import com.jpomodoro.model.Task;
@@ -236,7 +235,7 @@ public class MainWindow implements TimerListener {
             g.setCharacter(barX + i, y + BigDigits.HEIGHT + 2, i < filled ? '▓' : '░');
         }
 
-        String cycle = "Cycle " + timer.cycleSlot() + "/" + Config.CYCLES_BEFORE_LONG_BREAK
+        String cycle = "Cycle " + timer.cycleSlot() + "/" + timer.cyclesBeforeLongBreak()
                 + "  ·  Pomodoros : " + timer.focusCyclesCompleted();
         g.setForegroundColor(TextColor.ANSI.WHITE);
         g.putString(centerX(x, w, cycle.length()), y + BigDigits.HEIGHT + 3, cycle);

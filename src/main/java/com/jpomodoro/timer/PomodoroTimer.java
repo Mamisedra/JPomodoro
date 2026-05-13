@@ -1,6 +1,7 @@
 package com.jpomodoro.timer;
 
-import com.jpomodoro.config.Config;
+import com.jpomodoro.config.AppConfig;
+import com.jpomodoro.config.ConfigService;
 import com.jpomodoro.db.SessionRepository;
 import com.jpomodoro.notify.Notifier;
 
@@ -14,6 +15,7 @@ public class PomodoroTimer {
     public enum State { IDLE, RUNNING, PAUSED }
 
     private final SessionRepository sessions;
+    private final ConfigService config;
     private final ScheduledExecutorService scheduler =
             Executors.newSingleThreadScheduledExecutor(r -> {
                 Thread t = new Thread(r, "pomodoro-timer");
@@ -23,15 +25,17 @@ public class PomodoroTimer {
 
     private TimerListener listener;
     private SessionType currentType = SessionType.FOCUS;
-    private int remainingSeconds = SessionType.FOCUS.durationSeconds();
+    private int remainingSeconds;
     private int focusCyclesCompleted = 0;
     private State state = State.IDLE;
     private Long currentSessionId = null;
     private Long activeTaskId = null;
     private ScheduledFuture<?> ticker;
 
-    public PomodoroTimer(SessionRepository sessions) {
+    public PomodoroTimer(SessionRepository sessions, ConfigService config) {
         this.sessions = sessions;
+        this.config = config;
+        this.remainingSeconds = timerSettings().secondsFor(SessionType.FOCUS);
     }
 
     public void setListener(TimerListener listener) {
@@ -66,7 +70,7 @@ public class PomodoroTimer {
             currentSessionId = null;
         }
         currentType = SessionType.FOCUS;
-        remainingSeconds = currentType.durationSeconds();
+        remainingSeconds = timerSettings().secondsFor(currentType);
         focusCyclesCompleted = 0;
         state = State.IDLE;
         fireStateChanged();
@@ -81,10 +85,13 @@ public class PomodoroTimer {
     public synchronized State state() { return state; }
     public synchronized SessionType currentType() { return currentType; }
     public synchronized int remainingSeconds() { return remainingSeconds; }
-    public synchronized int totalSeconds() { return currentType.durationSeconds(); }
+    public synchronized int totalSeconds() { return timerSettings().secondsFor(currentType); }
     public synchronized int focusCyclesCompleted() { return focusCyclesCompleted; }
     public synchronized int cycleSlot() {
-        return (focusCyclesCompleted % Config.CYCLES_BEFORE_LONG_BREAK) + 1;
+        return (focusCyclesCompleted % cyclesBeforeLongBreak()) + 1;
+    }
+    public int cyclesBeforeLongBreak() {
+        return timerSettings().cyclesBeforeLongBreak();
     }
 
     public void shutdown() {
@@ -117,7 +124,7 @@ public class PomodoroTimer {
             }
             type = currentType;
             remaining = remainingSeconds;
-            total = currentType.durationSeconds();
+            total = timerSettings().secondsFor(currentType);
             cycle = cycleSlot();
         }
         if (listener != null) listener.onTick(type, remaining, total, cycle);
@@ -136,14 +143,14 @@ public class PomodoroTimer {
             }
             if (from == SessionType.FOCUS) {
                 focusCyclesCompleted++;
-                to = (focusCyclesCompleted % Config.CYCLES_BEFORE_LONG_BREAK == 0)
+                to = (focusCyclesCompleted % cyclesBeforeLongBreak() == 0)
                         ? SessionType.LONG_BREAK
                         : SessionType.SHORT_BREAK;
             } else {
                 to = SessionType.FOCUS;
             }
             currentType = to;
-            remainingSeconds = to.durationSeconds();
+            remainingSeconds = timerSettings().secondsFor(to);
             cycle = cycleSlot();
             currentSessionId = sessions.start(to, to == SessionType.FOCUS ? activeTaskId : null);
             state = State.RUNNING;
@@ -157,6 +164,10 @@ public class PomodoroTimer {
             listener.onTransition(from, to, cycle);
             listener.onStateChanged();
         }
+    }
+
+    private AppConfig.TimerSettings timerSettings() {
+        return config.get().timer();
     }
 
     private void fireStateChanged() {
