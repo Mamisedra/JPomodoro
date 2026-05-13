@@ -7,24 +7,32 @@ import com.googlecode.lanterna.graphics.TextGraphics;
 import com.googlecode.lanterna.input.KeyStroke;
 import com.googlecode.lanterna.input.KeyType;
 import com.googlecode.lanterna.screen.Screen;
+import com.jpomodoro.ai.SummaryService;
 import com.jpomodoro.config.AppConfig;
 import com.jpomodoro.config.ConfigService;
+import com.jpomodoro.db.FeedbackRepository;
 import com.jpomodoro.db.SessionRepository;
 import com.jpomodoro.db.TaskRepository;
 import com.jpomodoro.model.Priority;
+import com.jpomodoro.model.Summary;
 import com.jpomodoro.model.Task;
 import com.jpomodoro.notify.SoundPlayer;
 import com.jpomodoro.schedule.ScheduleMode;
 import com.jpomodoro.timer.PomodoroTimer;
 import com.jpomodoro.timer.SessionType;
 import com.jpomodoro.timer.TimerListener;
+import com.jpomodoro.ui.modal.BreakModal;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class MainWindow implements TimerListener {
 
@@ -33,8 +41,11 @@ public class MainWindow implements TimerListener {
     private final TaskRepository taskRepo;
     private final SessionRepository sessionRepo;
     private final ConfigService config;
+    private final SummaryService summaryService;
+    private final FeedbackRepository feedbackRepo;
 
     private final AtomicBoolean dirty = new AtomicBoolean(true);
+    private final AtomicReference<PendingBreak> pendingBreak = new AtomicReference<>();
     private volatile boolean running = true;
 
     private List<Task> tasks;
@@ -44,14 +55,19 @@ public class MainWindow implements TimerListener {
     private Tab currentTab = Tab.TIMER;
     private String statusMessage = "Bienvenue. Appuie sur [s] pour démarrer.";
 
+    private record PendingBreak(long sessionId, Instant from, Instant to) {}
+
     public MainWindow(Screen screen, PomodoroTimer timer,
                       TaskRepository taskRepo, SessionRepository sessionRepo,
-                      ConfigService config) {
+                      ConfigService config, SummaryService summaryService,
+                      FeedbackRepository feedbackRepo) {
         this.screen = screen;
         this.timer = timer;
         this.taskRepo = taskRepo;
         this.sessionRepo = sessionRepo;
         this.config = config;
+        this.summaryService = summaryService;
+        this.feedbackRepo = feedbackRepo;
         this.tasks = taskRepo.listOpen();
         this.timer.setListener(this);
     }
@@ -61,6 +77,8 @@ public class MainWindow implements TimerListener {
         screen.setCursorPosition(null);
         try {
             while (running) {
+                PendingBreak pb = pendingBreak.getAndSet(null);
+                if (pb != null) showBreakModal(pb);
                 if (dirty.compareAndSet(true, false)) {
                     render();
                 }
@@ -75,6 +93,12 @@ public class MainWindow implements TimerListener {
         } finally {
             screen.stopScreen();
         }
+    }
+
+    private void showBreakModal(PendingBreak pb) throws IOException {
+        CompletableFuture<Optional<Summary>> future = summaryService.summarizeAsync(pb.sessionId(), pb.from(), pb.to());
+        BreakModal.open(screen, future, feedbackRepo);
+        dirty.set(true);
     }
 
     private void handleKey(KeyStroke key) throws IOException {
@@ -719,9 +743,15 @@ public class MainWindow implements TimerListener {
     }
 
     @Override
-    public void onTransition(SessionType from, SessionType to, int cycleCount) {
+    public void onTransition(SessionType from, SessionType to, int cycleCount,
+                             Long completedSessionId, Instant completedStart, Instant completedEnd) {
         statusMessage = from.label() + " terminé → " + to.label();
         dirty.set(true);
+        if (from == SessionType.FOCUS && to.isBreak()
+                && completedSessionId != null && completedStart != null
+                && config.get().ai().enabled()) {
+            pendingBreak.set(new PendingBreak(completedSessionId, completedStart, completedEnd));
+        }
     }
 
     @Override

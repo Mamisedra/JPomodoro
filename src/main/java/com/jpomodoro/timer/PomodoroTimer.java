@@ -9,6 +9,7 @@ import com.jpomodoro.schedule.ScheduleMode;
 import com.jpomodoro.schedule.WorkHours;
 
 import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.concurrent.Executors;
@@ -36,6 +37,7 @@ public class PomodoroTimer {
     private int focusCyclesCompleted = 0;
     private State state = State.IDLE;
     private Long currentSessionId = null;
+    private Instant currentSessionStart = null;
     private Long activeTaskId = null;
     private ScheduledFuture<?> ticker;
 
@@ -92,6 +94,7 @@ public class PomodoroTimer {
         autoHold = false;
         if (state == State.IDLE) {
             currentSessionId = sessions.start(currentType, currentType == SessionType.FOCUS ? activeTaskId : null);
+            currentSessionStart = Instant.now();
         }
         state = State.RUNNING;
         scheduleTicker();
@@ -110,6 +113,7 @@ public class PomodoroTimer {
         if (currentSessionId != null) {
             sessions.cancel(currentSessionId);
             currentSessionId = null;
+            currentSessionStart = null;
         }
         currentType = SessionType.FOCUS;
         remainingSeconds = timerSettings().secondsFor(currentType);
@@ -177,13 +181,18 @@ public class PomodoroTimer {
         SessionType from;
         SessionType to;
         int cycle;
-        boolean held;
+        Long completedSessionId;
+        Instant completedStart;
+        Instant completedEnd = Instant.now();
         synchronized (this) {
             from = currentType;
+            completedSessionId = currentSessionId;
+            completedStart = currentSessionStart;
             if (currentSessionId != null) {
                 if (naturalEnd) sessions.complete(currentSessionId);
                 else sessions.cancel(currentSessionId);
                 currentSessionId = null;
+                currentSessionStart = null;
             }
             if (from == SessionType.FOCUS) {
                 focusCyclesCompleted++;
@@ -200,13 +209,12 @@ public class PomodoroTimer {
             if (to == SessionType.FOCUS && shouldAutoPause()) {
                 autoHold = true;
                 state = State.IDLE;
-                held = true;
             } else {
                 autoHold = false;
                 currentSessionId = sessions.start(to, to == SessionType.FOCUS ? activeTaskId : null);
+                currentSessionStart = Instant.now();
                 state = State.RUNNING;
                 scheduleTicker();
-                held = false;
             }
         }
         if (naturalEnd) {
@@ -214,7 +222,7 @@ public class PomodoroTimer {
             else notifier.notifyBreakEnded();
         }
         if (listener != null) {
-            listener.onTransition(from, to, cycle);
+            listener.onTransition(from, to, cycle, completedSessionId, completedStart, completedEnd);
             listener.onStateChanged();
         }
     }
