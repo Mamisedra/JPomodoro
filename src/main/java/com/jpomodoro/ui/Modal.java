@@ -18,6 +18,7 @@ public final class Modal {
     private Modal() {}
 
     public static String readLine(Screen screen, String prompt, String initial) throws IOException {
+        screen.clear();
         TerminalSize size = screen.getTerminalSize();
         int boxW = Math.min(size.getColumns() - 4, Math.max(60, prompt.length() + 30));
         int boxH = 5;
@@ -58,6 +59,7 @@ public final class Modal {
     }
 
     public static boolean confirm(Screen screen, String prompt) throws IOException {
+        screen.clear();
         TerminalSize size = screen.getTerminalSize();
         int boxW = Math.min(size.getColumns() - 4, Math.max(50, prompt.length() + 10));
         int boxH = 5;
@@ -85,6 +87,7 @@ public final class Modal {
     }
 
     public static Optional<Integer> choose(Screen screen, String title, List<String> options) throws IOException {
+        screen.clear();
         TerminalSize size = screen.getTerminalSize();
         int boxW = Math.min(size.getColumns() - 4, Math.max(40, title.length() + 10));
         int boxH = Math.min(size.getRows() - 4, options.size() + 4);
@@ -95,6 +98,7 @@ public final class Modal {
         int idx = 0;
 
         while (true) {
+            screen.clear();
             clear(g, x, y, boxW, boxH);
             drawBorder(g, x, y, boxW, boxH, " " + title + " ");
             for (int i = 0; i < options.size() && i < boxH - 3; i++) {
@@ -122,6 +126,7 @@ public final class Modal {
     }
 
     public static void info(Screen screen, String title, List<String> lines) throws IOException {
+        screen.clear();
         TerminalSize size = screen.getTerminalSize();
         int width = lines.stream().mapToInt(String::length).max().orElse(40);
         int boxW = Math.min(size.getColumns() - 4, Math.max(50, width + 6));
