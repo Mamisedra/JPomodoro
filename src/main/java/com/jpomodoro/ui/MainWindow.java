@@ -26,8 +26,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainWindow implements TimerListener {
 
-    private enum FocusZone { TIMER, TASKS }
-
     private final Screen screen;
     private final PomodoroTimer timer;
     private final TaskRepository taskRepo;
@@ -39,7 +37,7 @@ public class MainWindow implements TimerListener {
     private List<Task> tasks;
     private int selectedIndex = 0;
     private Long activeTaskId = null;
-    private FocusZone focusZone = FocusZone.TIMER;
+    private Tab currentTab = Tab.TIMER;
     private String statusMessage = "Bienvenue. Appuie sur [s] pour démarrer.";
 
     public MainWindow(Screen screen, PomodoroTimer timer,
@@ -78,30 +76,43 @@ public class MainWindow implements TimerListener {
         Character ch = key.getCharacter();
 
         if (ch != null) {
+            switch (ch) {
+                case '1' -> { currentTab = Tab.TIMER; return; }
+                case '2' -> { currentTab = Tab.HISTORY; return; }
+                case '3' -> { currentTab = Tab.SETTINGS; return; }
+                default -> {}
+            }
             switch (Character.toLowerCase(ch)) {
                 case 'q' -> { running = false; return; }
                 case 's' -> { timer.start(); statusMessage = "Timer démarré."; return; }
                 case 'p' -> { timer.pause(); statusMessage = "Timer en pause."; return; }
                 case 'r' -> { timer.reset(); statusMessage = "Timer réinitialisé."; return; }
                 case 'n' -> { timer.skip(); statusMessage = "Session passée."; return; }
-                case 'a' -> { promptAddTask(); return; }
-                case 'd' -> { deleteSelectedTask(); return; }
-                case ' ' -> { setActiveSelectedTask(); return; }
                 case 'm' -> { toggleScheduleMode(); return; }
-                case '!' -> { cyclePrioritySelected(); return; }
-                case 'e' -> { editEstimateSelected(); return; }
                 default -> {}
+            }
+            if (currentTab == Tab.TIMER) {
+                switch (Character.toLowerCase(ch)) {
+                    case 'a' -> { promptAddTask(); return; }
+                    case 'd' -> { deleteSelectedTask(); return; }
+                    case ' ' -> { setActiveSelectedTask(); return; }
+                    case '!' -> { cyclePrioritySelected(); return; }
+                    case 'e' -> { editEstimateSelected(); return; }
+                    default -> {}
+                }
             }
         }
 
         if (key.getKeyType() == KeyType.Tab) {
-            focusZone = (focusZone == FocusZone.TIMER) ? FocusZone.TASKS : FocusZone.TIMER;
-        } else if (key.getKeyType() == KeyType.ArrowUp) {
-            if (!tasks.isEmpty()) selectedIndex = Math.max(0, selectedIndex - 1);
-        } else if (key.getKeyType() == KeyType.ArrowDown) {
-            if (!tasks.isEmpty()) selectedIndex = Math.min(tasks.size() - 1, selectedIndex + 1);
-        } else if (key.getKeyType() == KeyType.Enter) {
-            toggleSelectedTask();
+            currentTab = currentTab.next();
+        } else if (currentTab == Tab.TIMER) {
+            if (key.getKeyType() == KeyType.ArrowUp) {
+                if (!tasks.isEmpty()) selectedIndex = Math.max(0, selectedIndex - 1);
+            } else if (key.getKeyType() == KeyType.ArrowDown) {
+                if (!tasks.isEmpty()) selectedIndex = Math.min(tasks.size() - 1, selectedIndex + 1);
+            } else if (key.getKeyType() == KeyType.Enter) {
+                toggleSelectedTask();
+            }
         }
     }
 
@@ -217,32 +228,72 @@ public class MainWindow implements TimerListener {
 
         drawBorder(g, 0, 0, width, height, "");
 
-        int bannerHeight = Banner.HEIGHT + 1; // 3 banner lines + 1 tagline
-        int timerHeight = 11;
+        int bannerHeight = Banner.HEIGHT + 1;
+        int tabsHeight = 1;
         int statsHeight = 3;
         int helpHeight = 4;
 
         int bannerY = 1;
         int sep1Y = bannerY + bannerHeight;
-        int timerY = sep1Y + 1;
-        int sep2Y = timerY + timerHeight;
-        int tasksY = sep2Y + 1;
+        int tabsY = sep1Y + 1;
+        int sep2Y = tabsY + tabsHeight;
+        int contentY = sep2Y + 1;
         int sep4Y = height - helpHeight - 1;
         int statsY = sep4Y - statsHeight;
         int sep3Y = statsY - 1;
-        int tasksHeight = sep3Y - tasksY;
+        int contentHeight = sep3Y - contentY;
 
         renderBanner(g, 1, bannerY, width - 2);
         drawHorizontal(g, 0, sep1Y, width);
-        renderTimer(g, 1, timerY, width - 2, timerHeight);
+        renderTabs(g, 1, tabsY, width - 2);
         drawHorizontal(g, 0, sep2Y, width);
-        renderTasks(g, 1, tasksY, width - 2, tasksHeight);
+
+        switch (currentTab) {
+            case TIMER -> renderTimerTab(g, 1, contentY, width - 2, contentHeight);
+            case HISTORY -> renderHistoryPlaceholder(g, 1, contentY, width - 2, contentHeight);
+            case SETTINGS -> renderSettingsPlaceholder(g, 1, contentY, width - 2, contentHeight);
+        }
+
         drawHorizontal(g, 0, sep3Y, width);
         renderStats(g, 1, statsY, width - 2, statsHeight);
         drawHorizontal(g, 0, sep4Y, width);
         renderHelp(g, 1, height - helpHeight, width - 2);
 
         screen.refresh();
+    }
+
+    private void renderTabs(TextGraphics g, int x, int y, int w) {
+        StringBuilder sb = new StringBuilder();
+        for (Tab t : Tab.values()) {
+            sb.append("  ");
+            sb.append(t == currentTab ? "▶ " : "  ");
+            sb.append("[").append(t.ordinal() + 1).append("] ").append(t.label());
+        }
+        String line = sb.toString();
+        g.setForegroundColor(TextColor.ANSI.WHITE);
+        g.putString(centerX(x, w, line.length()), y, line);
+    }
+
+    private void renderTimerTab(TextGraphics g, int x, int y, int w, int h) {
+        int timerHeight = Math.min(11, h - 4);
+        renderTimer(g, x, y, w, timerHeight);
+        int sepY = y + timerHeight;
+        drawHorizontal(g, x - 1, sepY, w + 2);
+        renderTasks(g, x, sepY + 1, w, h - timerHeight - 1);
+    }
+
+    private void renderHistoryPlaceholder(TextGraphics g, int x, int y, int w, int h) {
+        g.setForegroundColor(TextColor.ANSI.WHITE);
+        g.putString(x, y, "Historique", SGR.BOLD);
+        g.setForegroundColor(TextColor.ANSI.BLACK_BRIGHT);
+        g.putString(x, y + 2, "(à venir — Phase 7 : sessions + résumés + sparkline 7 jours + streak)");
+    }
+
+    private void renderSettingsPlaceholder(TextGraphics g, int x, int y, int w, int h) {
+        g.setForegroundColor(TextColor.ANSI.WHITE);
+        g.putString(x, y, "Réglages", SGR.BOLD);
+        g.setForegroundColor(TextColor.ANSI.BLACK_BRIGHT);
+        g.putString(x, y + 2, "(placeholder — éditable en Phase 5 C3)");
     }
 
     private void renderBanner(TextGraphics g, int x, int y, int w) {
@@ -305,10 +356,8 @@ public class MainWindow implements TimerListener {
     }
 
     private void renderTasks(TextGraphics g, int x, int y, int w, int h) {
-        boolean focused = focusZone == FocusZone.TASKS;
-        g.setForegroundColor(focused ? TextColor.ANSI.WHITE_BRIGHT : TextColor.ANSI.WHITE);
-        String title = "Tâches" + (focused ? " ◀" : "");
-        g.putString(x, y, title, SGR.BOLD);
+        g.setForegroundColor(TextColor.ANSI.WHITE_BRIGHT);
+        g.putString(x, y, "Tâches", SGR.BOLD);
 
         if (tasks.isEmpty()) {
             g.setForegroundColor(TextColor.ANSI.WHITE);
@@ -333,7 +382,7 @@ public class MainWindow implements TimerListener {
                     + truncate(t.title(), Math.max(4, w - 24))
                     + estimateTag + activeTag;
 
-            if (isSelected && focused) {
+            if (isSelected) {
                 g.setForegroundColor(TextColor.ANSI.BLACK);
                 g.setBackgroundColor(TextColor.ANSI.WHITE);
             } else if (t.done()) {
@@ -399,9 +448,9 @@ public class MainWindow implements TimerListener {
 
     private void renderHelp(TextGraphics g, int x, int y, int w) {
         g.setForegroundColor(TextColor.ANSI.BLACK_BRIGHT);
-        g.putString(x, y,     "[s] start   [p] pause   [r] reset   [n] skip   [m] auto/manuel");
+        g.putString(x, y,     "[s] start  [p] pause  [r] reset  [n] skip  [m] auto/manuel");
         g.putString(x, y + 1, "[a] add  [enter] toggle  [d] del  [space] active  [!] prio  [e] est");
-        g.putString(x, y + 2, "[↑↓] nav    [tab] zone   [q] quit");
+        g.putString(x, y + 2, "[↑↓] nav  [tab/1·2·3] vue  [q] quit");
     }
 
     // --- helpers ---
