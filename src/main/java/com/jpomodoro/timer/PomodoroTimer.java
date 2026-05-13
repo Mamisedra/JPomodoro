@@ -4,7 +4,13 @@ import com.jpomodoro.config.AppConfig;
 import com.jpomodoro.config.ConfigService;
 import com.jpomodoro.db.SessionRepository;
 import com.jpomodoro.notify.Notifier;
+import com.jpomodoro.schedule.ScheduleChecker;
+import com.jpomodoro.schedule.ScheduleMode;
+import com.jpomodoro.schedule.WorkHours;
 
+import java.time.Clock;
+import java.time.LocalDateTime;
+import java.util.Optional;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -33,10 +39,15 @@ public class PomodoroTimer {
     private Long activeTaskId = null;
     private ScheduledFuture<?> ticker;
 
+    private ScheduleMode mode;
+    private boolean autoHold = false;
+    private Clock clock = Clock.systemDefaultZone();
+
     public PomodoroTimer(SessionRepository sessions, ConfigService config, Notifier notifier) {
         this.sessions = sessions;
         this.config = config;
         this.notifier = notifier;
+        this.mode = ScheduleMode.parse(config.get().schedule().mode());
         this.remainingSeconds = timerSettings().secondsFor(SessionType.FOCUS);
     }
 
@@ -48,8 +59,37 @@ public class PomodoroTimer {
         this.activeTaskId = taskId;
     }
 
+    public synchronized void setClock(Clock clock) {
+        this.clock = clock;
+    }
+
+    public synchronized ScheduleMode mode() {
+        return mode;
+    }
+
+    public synchronized void setMode(ScheduleMode newMode) {
+        this.mode = newMode;
+        if (newMode == ScheduleMode.MANUAL) autoHold = false;
+        fireStateChanged();
+    }
+
+    public synchronized boolean autoHold() {
+        return autoHold;
+    }
+
+    public synchronized Optional<LocalDateTime> nextBoundary() {
+        WorkHours hours = WorkHours.from(config.get().schedule());
+        return ScheduleChecker.nextBoundary(hours, LocalDateTime.now(clock));
+    }
+
     public synchronized void start() {
         if (state == State.RUNNING) return;
+        if (state == State.IDLE && currentType == SessionType.FOCUS && shouldAutoPause()) {
+            autoHold = true;
+            fireStateChanged();
+            return;
+        }
+        autoHold = false;
         if (state == State.IDLE) {
             currentSessionId = sessions.start(currentType, currentType == SessionType.FOCUS ? activeTaskId : null);
         }
@@ -75,6 +115,7 @@ public class PomodoroTimer {
         remainingSeconds = timerSettings().secondsFor(currentType);
         focusCyclesCompleted = 0;
         state = State.IDLE;
+        autoHold = false;
         fireStateChanged();
     }
 
@@ -136,6 +177,7 @@ public class PomodoroTimer {
         SessionType from;
         SessionType to;
         int cycle;
+        boolean held;
         synchronized (this) {
             from = currentType;
             if (currentSessionId != null) {
@@ -154,9 +196,18 @@ public class PomodoroTimer {
             currentType = to;
             remainingSeconds = timerSettings().secondsFor(to);
             cycle = cycleSlot();
-            currentSessionId = sessions.start(to, to == SessionType.FOCUS ? activeTaskId : null);
-            state = State.RUNNING;
-            scheduleTicker();
+
+            if (to == SessionType.FOCUS && shouldAutoPause()) {
+                autoHold = true;
+                state = State.IDLE;
+                held = true;
+            } else {
+                autoHold = false;
+                currentSessionId = sessions.start(to, to == SessionType.FOCUS ? activeTaskId : null);
+                state = State.RUNNING;
+                scheduleTicker();
+                held = false;
+            }
         }
         if (naturalEnd) {
             if (from == SessionType.FOCUS) notifier.notifyFocusEnded();
@@ -166,6 +217,12 @@ public class PomodoroTimer {
             listener.onTransition(from, to, cycle);
             listener.onStateChanged();
         }
+    }
+
+    private boolean shouldAutoPause() {
+        if (mode != ScheduleMode.AUTO) return false;
+        WorkHours hours = WorkHours.from(config.get().schedule());
+        return !ScheduleChecker.inWorkHours(hours, LocalDateTime.now(clock).toLocalTime());
     }
 
     private AppConfig.TimerSettings timerSettings() {
