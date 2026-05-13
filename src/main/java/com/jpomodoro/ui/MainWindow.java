@@ -10,6 +10,7 @@ import com.googlecode.lanterna.input.KeyType;
 import com.googlecode.lanterna.screen.Screen;
 import com.jpomodoro.db.SessionRepository;
 import com.jpomodoro.db.TaskRepository;
+import com.jpomodoro.model.Priority;
 import com.jpomodoro.model.Task;
 import com.jpomodoro.schedule.ScheduleMode;
 import com.jpomodoro.timer.PomodoroTimer;
@@ -87,6 +88,8 @@ public class MainWindow implements TimerListener {
                 case 'd' -> { deleteSelectedTask(); return; }
                 case ' ' -> { setActiveSelectedTask(); return; }
                 case 'm' -> { toggleScheduleMode(); return; }
+                case '!' -> { cyclePrioritySelected(); return; }
+                case 'e' -> { editEstimateSelected(); return; }
                 default -> {}
             }
         }
@@ -136,6 +139,43 @@ public class MainWindow implements TimerListener {
         tasks = taskRepo.listOpen();
         if (selectedIndex >= tasks.size()) selectedIndex = Math.max(0, tasks.size() - 1);
         statusMessage = "Tâche supprimée.";
+    }
+
+    private void cyclePrioritySelected() {
+        Task t = currentTask();
+        if (t == null) return;
+        Priority p = taskRepo.cyclePriority(t.id());
+        tasks = taskRepo.listOpen();
+        reSelectById(t.id());
+        statusMessage = "Priorité : " + p.name();
+    }
+
+    private void editEstimateSelected() throws IOException {
+        Task t = currentTask();
+        if (t == null) return;
+        String raw = readLineModal("Estimation (pomodoros, vide pour effacer) : ");
+        if (raw == null) return;
+        Integer value = null;
+        if (!raw.isBlank()) {
+            try {
+                int n = Integer.parseInt(raw.trim());
+                if (n > 0) value = n;
+            } catch (NumberFormatException ignore) {
+                statusMessage = "Estimation invalide.";
+                return;
+            }
+        }
+        taskRepo.setEstimate(t.id(), value);
+        tasks = taskRepo.listOpen();
+        reSelectById(t.id());
+        statusMessage = value == null ? "Estimation effacée." : ("Estimation : " + value);
+    }
+
+    private void reSelectById(long id) {
+        for (int i = 0; i < tasks.size(); i++) {
+            if (tasks.get(i).id() == id) { selectedIndex = i; return; }
+        }
+        selectedIndex = Math.min(selectedIndex, Math.max(0, tasks.size() - 1));
     }
 
     private void toggleScheduleMode() {
@@ -286,8 +326,12 @@ public class MainWindow implements TimerListener {
 
             String box = t.done() ? "[✓]" : "[ ]";
             String marker = isSelected ? "▶ " : "  ";
+            String priorityTag = "[" + t.priority().marker() + "] ";
             String activeTag = isActive ? "  ← active" : "";
-            String line = marker + box + " " + truncate(t.title(), w - 16) + activeTag;
+            String estimateTag = estimateSuffix(t);
+            String line = marker + box + " " + priorityTag
+                    + truncate(t.title(), Math.max(4, w - 24))
+                    + estimateTag + activeTag;
 
             if (isSelected && focused) {
                 g.setForegroundColor(TextColor.ANSI.BLACK);
@@ -299,7 +343,7 @@ public class MainWindow implements TimerListener {
                 g.setForegroundColor(TextColor.ANSI.YELLOW);
                 g.setBackgroundColor(TextColor.ANSI.DEFAULT);
             } else {
-                g.setForegroundColor(TextColor.ANSI.WHITE);
+                g.setForegroundColor(priorityColor(t.priority()));
                 g.setBackgroundColor(TextColor.ANSI.DEFAULT);
             }
             String padded = padRight(line, w);
@@ -331,6 +375,20 @@ public class MainWindow implements TimerListener {
         g.putString(x, y + 2, truncate(statusMessage, w));
     }
 
+    private TextColor priorityColor(Priority p) {
+        return switch (p) {
+            case HIGH -> TextColor.ANSI.RED_BRIGHT;
+            case NORMAL -> TextColor.ANSI.WHITE;
+            case LOW -> TextColor.ANSI.BLACK_BRIGHT;
+        };
+    }
+
+    private String estimateSuffix(Task t) {
+        if (t.estimatedPomodoros() == null) return "";
+        int consumed = sessionRepo.countFocusForTask(t.id());
+        return "  (" + consumed + "/" + t.estimatedPomodoros() + ")";
+    }
+
     private String formatBoundary(LocalDateTime boundary) {
         LocalDateTime now = LocalDateTime.now();
         if (boundary.toLocalDate().equals(now.toLocalDate())) {
@@ -342,7 +400,7 @@ public class MainWindow implements TimerListener {
     private void renderHelp(TextGraphics g, int x, int y, int w) {
         g.setForegroundColor(TextColor.ANSI.BLACK_BRIGHT);
         g.putString(x, y,     "[s] start   [p] pause   [r] reset   [n] skip   [m] auto/manuel");
-        g.putString(x, y + 1, "[a] add     [enter] toggle   [d] del   [space] active");
+        g.putString(x, y + 1, "[a] add  [enter] toggle  [d] del  [space] active  [!] prio  [e] est");
         g.putString(x, y + 2, "[↑↓] nav    [tab] zone   [q] quit");
     }
 
