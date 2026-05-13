@@ -39,7 +39,7 @@ public class App {
         Terminal terminal = new DefaultTerminalFactory().createTerminal();
         Screen screen = new TerminalScreen(terminal);
 
-        MainWindow window = new MainWindow(screen, timer, taskRepo, sessionRepo);
+        MainWindow window = new MainWindow(screen, timer, taskRepo, sessionRepo, config);
         try {
             window.run();
         } finally {

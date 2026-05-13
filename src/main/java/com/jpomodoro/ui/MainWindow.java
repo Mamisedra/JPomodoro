@@ -7,10 +7,13 @@ import com.googlecode.lanterna.graphics.TextGraphics;
 import com.googlecode.lanterna.input.KeyStroke;
 import com.googlecode.lanterna.input.KeyType;
 import com.googlecode.lanterna.screen.Screen;
+import com.jpomodoro.config.AppConfig;
+import com.jpomodoro.config.ConfigService;
 import com.jpomodoro.db.SessionRepository;
 import com.jpomodoro.db.TaskRepository;
 import com.jpomodoro.model.Priority;
 import com.jpomodoro.model.Task;
+import com.jpomodoro.notify.SoundPlayer;
 import com.jpomodoro.schedule.ScheduleMode;
 import com.jpomodoro.timer.PomodoroTimer;
 import com.jpomodoro.timer.SessionType;
@@ -29,22 +32,26 @@ public class MainWindow implements TimerListener {
     private final PomodoroTimer timer;
     private final TaskRepository taskRepo;
     private final SessionRepository sessionRepo;
+    private final ConfigService config;
 
     private final AtomicBoolean dirty = new AtomicBoolean(true);
     private volatile boolean running = true;
 
     private List<Task> tasks;
     private int selectedIndex = 0;
+    private int settingIndex = 0;
     private Long activeTaskId = null;
     private Tab currentTab = Tab.TIMER;
     private String statusMessage = "Bienvenue. Appuie sur [s] pour démarrer.";
 
     public MainWindow(Screen screen, PomodoroTimer timer,
-                      TaskRepository taskRepo, SessionRepository sessionRepo) {
+                      TaskRepository taskRepo, SessionRepository sessionRepo,
+                      ConfigService config) {
         this.screen = screen;
         this.timer = timer;
         this.taskRepo = taskRepo;
         this.sessionRepo = sessionRepo;
+        this.config = config;
         this.tasks = taskRepo.listOpen();
         this.timer.setListener(this);
     }
@@ -111,6 +118,15 @@ public class MainWindow implements TimerListener {
                 if (!tasks.isEmpty()) selectedIndex = Math.min(tasks.size() - 1, selectedIndex + 1);
             } else if (key.getKeyType() == KeyType.Enter) {
                 toggleSelectedTask();
+            }
+        } else if (currentTab == Tab.SETTINGS) {
+            int rows = settingsRowCount();
+            if (key.getKeyType() == KeyType.ArrowUp) {
+                settingIndex = (settingIndex - 1 + rows) % rows;
+            } else if (key.getKeyType() == KeyType.ArrowDown) {
+                settingIndex = (settingIndex + 1) % rows;
+            } else if (key.getKeyType() == KeyType.Enter) {
+                editSetting(settingIndex);
             }
         }
     }
@@ -292,7 +308,203 @@ public class MainWindow implements TimerListener {
         g.setForegroundColor(TextColor.ANSI.WHITE);
         g.putString(x, y, "Réglages", SGR.BOLD);
         g.setForegroundColor(TextColor.ANSI.BLACK_BRIGHT);
-        g.putString(x, y + 2, "(placeholder — éditable en Phase 5 C3)");
+        g.putString(x, y + 1, "[↑↓] naviguer · [Enter] éditer");
+
+        AppConfig c = config.get();
+        SettingRow[] rows = settingsRows(c);
+        int startY = y + 3;
+        int max = Math.min(rows.length, h - 4);
+        for (int i = 0; i < max; i++) {
+            SettingRow row = rows[i];
+            String line = String.format(" %-32s %s", row.label, row.value);
+            if (i == settingIndex) {
+                g.setForegroundColor(TextColor.ANSI.BLACK);
+                g.setBackgroundColor(TextColor.ANSI.WHITE);
+            } else if (row.section) {
+                g.setForegroundColor(TextColor.ANSI.YELLOW);
+                g.setBackgroundColor(TextColor.ANSI.DEFAULT);
+            } else {
+                g.setForegroundColor(TextColor.ANSI.WHITE);
+                g.setBackgroundColor(TextColor.ANSI.DEFAULT);
+            }
+            g.putString(x, startY + i, padRight(line, w));
+        }
+        g.setBackgroundColor(TextColor.ANSI.DEFAULT);
+    }
+
+    private record SettingRow(String label, String value, boolean section) {}
+
+    private SettingRow[] settingsRows(AppConfig c) {
+        return new SettingRow[] {
+                new SettingRow("Durée focus (min)",        String.valueOf(c.timer().focusMinutes()), false),
+                new SettingRow("Pause courte (min)",       String.valueOf(c.timer().shortBreakMinutes()), false),
+                new SettingRow("Pause longue (min)",       String.valueOf(c.timer().longBreakMinutes()), false),
+                new SettingRow("Cycles avant pause longue", String.valueOf(c.timer().cyclesBeforeLongBreak()), false),
+                new SettingRow("Matin début",              c.schedule().morningStart(), false),
+                new SettingRow("Matin fin",                c.schedule().morningEnd(), false),
+                new SettingRow("Après-midi début",         c.schedule().afternoonStart(), false),
+                new SettingRow("Après-midi fin",           c.schedule().afternoonEnd(), false),
+                new SettingRow("IA activée",               c.ai().enabled() ? "oui" : "non", false),
+                new SettingRow("Modèle IA",                c.ai().model(), false),
+                new SettingRow("Endpoint Ollama",          c.ai().endpoint(), false),
+                new SettingRow("Notifications activées",   c.notification().enabled() ? "oui" : "non", false),
+                new SettingRow("Son",                      c.notification().sound(), false),
+                new SettingRow("Webhook URL",              c.webhook().url().isEmpty() ? "(vide)" : c.webhook().url(), false),
+                new SettingRow("Webhook activé",           c.webhook().enabled() ? "oui" : "non", false),
+                new SettingRow("Palette",                  c.appearance().palette(), false),
+        };
+    }
+
+    private int settingsRowCount() {
+        return settingsRows(config.get()).length;
+    }
+
+    private void editSetting(int index) throws IOException {
+        switch (index) {
+            case 0 -> editTimerMinutes("Durée focus (min)", c -> c.timer().focusMinutes(),
+                    (c, v) -> withFocus(c, v));
+            case 1 -> editTimerMinutes("Pause courte (min)", c -> c.timer().shortBreakMinutes(),
+                    (c, v) -> withShortBreak(c, v));
+            case 2 -> editTimerMinutes("Pause longue (min)", c -> c.timer().longBreakMinutes(),
+                    (c, v) -> withLongBreak(c, v));
+            case 3 -> editTimerMinutes("Cycles avant pause longue", c -> c.timer().cyclesBeforeLongBreak(),
+                    (c, v) -> withCycles(c, v));
+            case 4 -> editTime("Matin début (HH:mm)", c -> c.schedule().morningStart(),
+                    (c, v) -> withSchedule(c, v, c.schedule().morningEnd(), c.schedule().afternoonStart(), c.schedule().afternoonEnd()));
+            case 5 -> editTime("Matin fin (HH:mm)", c -> c.schedule().morningEnd(),
+                    (c, v) -> withSchedule(c, c.schedule().morningStart(), v, c.schedule().afternoonStart(), c.schedule().afternoonEnd()));
+            case 6 -> editTime("Après-midi début (HH:mm)", c -> c.schedule().afternoonStart(),
+                    (c, v) -> withSchedule(c, c.schedule().morningStart(), c.schedule().morningEnd(), v, c.schedule().afternoonEnd()));
+            case 7 -> editTime("Après-midi fin (HH:mm)", c -> c.schedule().afternoonEnd(),
+                    (c, v) -> withSchedule(c, c.schedule().morningStart(), c.schedule().morningEnd(), c.schedule().afternoonStart(), v));
+            case 8 -> toggleAiEnabled();
+            case 9 -> editText("Modèle IA", config.get().ai().model(), this::withAiModel);
+            case 10 -> editText("Endpoint Ollama", config.get().ai().endpoint(), this::withAiEndpoint);
+            case 11 -> toggleNotificationsEnabled();
+            case 12 -> chooseSound();
+            case 13 -> editText("Webhook URL (vide pour désactiver)", config.get().webhook().url(), this::withWebhookUrl);
+            case 14 -> toggleWebhookEnabled();
+            case 15 -> editText("Palette (default/mono/synthwave)", config.get().appearance().palette(), this::withPalette);
+            default -> {}
+        }
+    }
+
+    @FunctionalInterface
+    private interface IntGetter { int get(AppConfig c); }
+    @FunctionalInterface
+    private interface StringGetter { String get(AppConfig c); }
+    @FunctionalInterface
+    private interface IntApplier { AppConfig apply(AppConfig c, int v); }
+    @FunctionalInterface
+    private interface StringApplier { AppConfig apply(AppConfig c, String v); }
+
+    private void editTimerMinutes(String label, IntGetter getter, IntApplier applier) throws IOException {
+        String raw = Modal.readLine(screen, label + " : ", String.valueOf(getter.get(config.get())));
+        if (raw == null) return;
+        int v;
+        try {
+            v = Integer.parseInt(raw.trim());
+            if (v <= 0) throw new NumberFormatException();
+        } catch (NumberFormatException e) {
+            statusMessage = "Valeur invalide.";
+            return;
+        }
+        config.update(c -> applier.apply(c, v));
+        statusMessage = label + " = " + v;
+    }
+
+    private void editTime(String label, StringGetter getter, StringApplier applier) throws IOException {
+        String raw = Modal.readLine(screen, label + " : ", getter.get(config.get()));
+        if (raw == null || raw.isBlank()) return;
+        try {
+            java.time.LocalTime.parse(raw.trim());
+        } catch (Exception e) {
+            statusMessage = "Format invalide (HH:mm attendu).";
+            return;
+        }
+        config.update(c -> applier.apply(c, raw.trim()));
+        statusMessage = label + " = " + raw.trim();
+    }
+
+    private void editText(String label, String current, StringApplier applier) throws IOException {
+        String raw = Modal.readLine(screen, label + " : ", current);
+        if (raw == null) return;
+        config.update(c -> applier.apply(c, raw));
+        statusMessage = label + " mis à jour.";
+    }
+
+    private void toggleAiEnabled() {
+        config.update(c -> new AppConfig(c.timer(), c.schedule(),
+                new AppConfig.AiSettings(!c.ai().enabled(), c.ai().model(), c.ai().endpoint(), c.ai().timeoutSeconds()),
+                c.notification(), c.webhook(), c.appearance(), c.onboarded()));
+        statusMessage = "IA " + (config.get().ai().enabled() ? "activée" : "désactivée") + ".";
+    }
+
+    private void toggleNotificationsEnabled() {
+        config.update(c -> new AppConfig(c.timer(), c.schedule(), c.ai(),
+                new AppConfig.NotificationSettings(!c.notification().enabled(), c.notification().sound()),
+                c.webhook(), c.appearance(), c.onboarded()));
+        statusMessage = "Notifications " + (config.get().notification().enabled() ? "activées" : "désactivées") + ".";
+    }
+
+    private void toggleWebhookEnabled() {
+        config.update(c -> new AppConfig(c.timer(), c.schedule(), c.ai(), c.notification(),
+                new AppConfig.WebhookSettings(c.webhook().url(), !c.webhook().enabled()),
+                c.appearance(), c.onboarded()));
+        statusMessage = "Webhook " + (config.get().webhook().enabled() ? "activé" : "désactivé") + ".";
+    }
+
+    private void chooseSound() throws IOException {
+        java.util.List<String> options = new java.util.ArrayList<>(SoundPlayer.presets());
+        java.util.Collections.sort(options);
+        options.add("none");
+        java.util.Optional<Integer> picked = Modal.choose(screen, "Son notification", options);
+        if (picked.isEmpty()) return;
+        String value = options.get(picked.get());
+        config.update(c -> new AppConfig(c.timer(), c.schedule(), c.ai(),
+                new AppConfig.NotificationSettings(c.notification().enabled(), value),
+                c.webhook(), c.appearance(), c.onboarded()));
+        statusMessage = "Son : " + value;
+    }
+
+    private AppConfig withFocus(AppConfig c, int v) {
+        return withTimer(c, new AppConfig.TimerSettings(v, c.timer().shortBreakMinutes(), c.timer().longBreakMinutes(), c.timer().cyclesBeforeLongBreak()));
+    }
+    private AppConfig withShortBreak(AppConfig c, int v) {
+        return withTimer(c, new AppConfig.TimerSettings(c.timer().focusMinutes(), v, c.timer().longBreakMinutes(), c.timer().cyclesBeforeLongBreak()));
+    }
+    private AppConfig withLongBreak(AppConfig c, int v) {
+        return withTimer(c, new AppConfig.TimerSettings(c.timer().focusMinutes(), c.timer().shortBreakMinutes(), v, c.timer().cyclesBeforeLongBreak()));
+    }
+    private AppConfig withCycles(AppConfig c, int v) {
+        return withTimer(c, new AppConfig.TimerSettings(c.timer().focusMinutes(), c.timer().shortBreakMinutes(), c.timer().longBreakMinutes(), v));
+    }
+    private AppConfig withTimer(AppConfig c, AppConfig.TimerSettings t) {
+        return new AppConfig(t, c.schedule(), c.ai(), c.notification(), c.webhook(), c.appearance(), c.onboarded());
+    }
+    private AppConfig withSchedule(AppConfig c, String ms, String me, String as, String ae) {
+        return new AppConfig(c.timer(),
+                new AppConfig.ScheduleSettings(ms, me, as, ae, c.schedule().mode()),
+                c.ai(), c.notification(), c.webhook(), c.appearance(), c.onboarded());
+    }
+    private AppConfig withAiModel(AppConfig c, String v) {
+        return new AppConfig(c.timer(), c.schedule(),
+                new AppConfig.AiSettings(c.ai().enabled(), v, c.ai().endpoint(), c.ai().timeoutSeconds()),
+                c.notification(), c.webhook(), c.appearance(), c.onboarded());
+    }
+    private AppConfig withAiEndpoint(AppConfig c, String v) {
+        return new AppConfig(c.timer(), c.schedule(),
+                new AppConfig.AiSettings(c.ai().enabled(), c.ai().model(), v, c.ai().timeoutSeconds()),
+                c.notification(), c.webhook(), c.appearance(), c.onboarded());
+    }
+    private AppConfig withWebhookUrl(AppConfig c, String v) {
+        return new AppConfig(c.timer(), c.schedule(), c.ai(), c.notification(),
+                new AppConfig.WebhookSettings(v, c.webhook().enabled()),
+                c.appearance(), c.onboarded());
+    }
+    private AppConfig withPalette(AppConfig c, String v) {
+        return new AppConfig(c.timer(), c.schedule(), c.ai(), c.notification(), c.webhook(),
+                new AppConfig.AppearanceSettings(v), c.onboarded());
     }
 
     private void renderBanner(TextGraphics g, int x, int y, int w) {
