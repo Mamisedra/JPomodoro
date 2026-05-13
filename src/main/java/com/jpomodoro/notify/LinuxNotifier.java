@@ -7,16 +7,22 @@ public final class LinuxNotifier implements Notifier {
 
     private static final Logger log = LoggerFactory.getLogger(LinuxNotifier.class);
 
+    private final SoundPlayer player;
+
+    public LinuxNotifier(SoundPlayer player) {
+        this.player = player;
+    }
+
     @Override
     public void notifyFocusEnded() {
         toast("Pomodoro", "Pause méritée — éloigne-toi de l'écran.");
-        bell();
+        player.play();
     }
 
     @Override
     public void notifyBreakEnded() {
         toast("Pomodoro", "Retour au focus, c'est reparti.");
-        bell();
+        player.play();
     }
 
     @Override
@@ -32,10 +38,5 @@ public final class LinuxNotifier implements Notifier {
         } catch (Exception e) {
             log.warn("notify-send indisponible : {}", e.toString());
         }
-    }
-
-    private void bell() {
-        System.out.print('\007');
-        System.out.flush();
     }
 }

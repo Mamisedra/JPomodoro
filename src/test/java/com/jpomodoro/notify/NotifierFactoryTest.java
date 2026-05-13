@@ -1,28 +1,37 @@
 package com.jpomodoro.notify;
 
+import com.jpomodoro.TestSupport;
+import com.jpomodoro.config.ConfigService;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class NotifierFactoryTest {
 
-    @Test
-    void macReturnsMacNotifier() {
-        assertThat(NotifierFactory.forOs("Mac OS X")).isInstanceOf(MacNotifier.class);
-        assertThat(NotifierFactory.forOs("Darwin")).isInstanceOf(MacNotifier.class);
+    private SoundPlayer newPlayer() throws Exception {
+        return new SoundPlayer(new ConfigService(TestSupport.tempPaths()));
     }
 
     @Test
-    void linuxReturnsLinuxNotifier() {
-        assertThat(NotifierFactory.forOs("Linux")).isInstanceOf(LinuxNotifier.class);
-        assertThat(NotifierFactory.forOs("GNU/Linux")).isInstanceOf(LinuxNotifier.class);
+    void macReturnsMacNotifier() throws Exception {
+        SoundPlayer p = newPlayer();
+        assertThat(NotifierFactory.forOs("Mac OS X", p)).isInstanceOf(MacNotifier.class);
+        assertThat(NotifierFactory.forOs("Darwin", p)).isInstanceOf(MacNotifier.class);
     }
 
     @Test
-    void unknownReturnsNoop() {
-        assertThat(NotifierFactory.forOs("Windows 11")).isInstanceOf(NoopNotifier.class);
-        assertThat(NotifierFactory.forOs(null)).isInstanceOf(NoopNotifier.class);
-        assertThat(NotifierFactory.forOs("")).isInstanceOf(NoopNotifier.class);
+    void linuxReturnsLinuxNotifier() throws Exception {
+        SoundPlayer p = newPlayer();
+        assertThat(NotifierFactory.forOs("Linux", p)).isInstanceOf(LinuxNotifier.class);
+        assertThat(NotifierFactory.forOs("GNU/Linux", p)).isInstanceOf(LinuxNotifier.class);
+    }
+
+    @Test
+    void unknownReturnsNoop() throws Exception {
+        SoundPlayer p = newPlayer();
+        assertThat(NotifierFactory.forOs("Windows 11", p)).isInstanceOf(NoopNotifier.class);
+        assertThat(NotifierFactory.forOs(null, p)).isInstanceOf(NoopNotifier.class);
+        assertThat(NotifierFactory.forOs("", p)).isInstanceOf(NoopNotifier.class);
     }
 
     @Test
