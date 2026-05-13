@@ -11,9 +11,13 @@ import com.googlecode.lanterna.screen.Screen;
 import com.jpomodoro.db.SessionRepository;
 import com.jpomodoro.db.TaskRepository;
 import com.jpomodoro.model.Task;
+import com.jpomodoro.schedule.ScheduleMode;
 import com.jpomodoro.timer.PomodoroTimer;
 import com.jpomodoro.timer.SessionType;
 import com.jpomodoro.timer.TimerListener;
+
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 
 import java.io.IOException;
 import java.util.List;
@@ -82,6 +86,7 @@ public class MainWindow implements TimerListener {
                 case 'a' -> { promptAddTask(); return; }
                 case 'd' -> { deleteSelectedTask(); return; }
                 case ' ' -> { setActiveSelectedTask(); return; }
+                case 'm' -> { toggleScheduleMode(); return; }
                 default -> {}
             }
         }
@@ -131,6 +136,12 @@ public class MainWindow implements TimerListener {
         tasks = taskRepo.listOpen();
         if (selectedIndex >= tasks.size()) selectedIndex = Math.max(0, tasks.size() - 1);
         statusMessage = "Tâche supprimée.";
+    }
+
+    private void toggleScheduleMode() {
+        ScheduleMode next = (timer.mode() == ScheduleMode.AUTO) ? ScheduleMode.MANUAL : ScheduleMode.AUTO;
+        timer.setMode(next);
+        statusMessage = "Mode " + (next == ScheduleMode.AUTO ? "AUTO" : "MANUEL") + ".";
     }
 
     private void setActiveSelectedTask() {
@@ -307,13 +318,30 @@ public class MainWindow implements TimerListener {
         g.setForegroundColor(TextColor.ANSI.CYAN);
         g.putString(x, y, line);
 
+        String modeBadge = (timer.mode() == ScheduleMode.AUTO) ? "[AUTO]" : "[MANUEL]";
+        String boundary = timer.nextBoundary()
+                .map(b -> "  →  " + formatBoundary(b))
+                .orElse("");
+        String holdMark = timer.autoHold() ? "  ⏸ hors créneau" : "";
+        String scheduleLine = modeBadge + boundary + holdMark;
+        g.setForegroundColor(timer.autoHold() ? TextColor.ANSI.YELLOW : TextColor.ANSI.WHITE);
+        g.putString(x, y + 1, truncate(scheduleLine, w));
+
         g.setForegroundColor(TextColor.ANSI.WHITE);
-        g.putString(x, y + 1, truncate(statusMessage, w));
+        g.putString(x, y + 2, truncate(statusMessage, w));
+    }
+
+    private String formatBoundary(LocalDateTime boundary) {
+        LocalDateTime now = LocalDateTime.now();
+        if (boundary.toLocalDate().equals(now.toLocalDate())) {
+            return boundary.format(DateTimeFormatter.ofPattern("HH:mm"));
+        }
+        return boundary.format(DateTimeFormatter.ofPattern("dd/MM HH:mm"));
     }
 
     private void renderHelp(TextGraphics g, int x, int y, int w) {
         g.setForegroundColor(TextColor.ANSI.BLACK_BRIGHT);
-        g.putString(x, y,     "[s] start   [p] pause   [r] reset   [n] skip");
+        g.putString(x, y,     "[s] start   [p] pause   [r] reset   [n] skip   [m] auto/manuel");
         g.putString(x, y + 1, "[a] add     [enter] toggle   [d] del   [space] active");
         g.putString(x, y + 2, "[↑↓] nav    [tab] zone   [q] quit");
     }
