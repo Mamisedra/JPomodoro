@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
 # Wrapper pour lancer JPomodoro.
 # Résout java + chemin du JAR de manière robuste.
+#
+# Variables d'environnement reconnues :
+#   JPOMODORO_JAR     chemin alternatif du JAR (défaut : ../target/pomodoro.jar)
+#   JAVA_HOME         JDK à utiliser (défaut : /opt/homebrew/opt/openjdk puis PATH)
+#
+# Notes :
+# - Modèles Ollama : si stockés sur disque externe (ex: /Volumes/DD-2/ollama-models),
+#   monter le disque avant lancement. Sinon l'IA sera désactivée à l'usage.
+# - Lock file : ~/.pomodoro/.lock empêche les doubles instances.
 
 set -e
 
-# Chemin du JAR : par défaut relatif au script, override possible via JPOMODORO_JAR.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JAR="${JPOMODORO_JAR:-$SCRIPT_DIR/../target/pomodoro.jar}"
 
@@ -14,7 +22,6 @@ if [ ! -f "$JAR" ]; then
     exit 1
 fi
 
-# Résolution de java : JAVA_HOME > Homebrew openjdk > java in PATH
 if [ -n "$JAVA_HOME" ] && [ -x "$JAVA_HOME/bin/java" ]; then
     JAVA="$JAVA_HOME/bin/java"
 elif [ -x "/opt/homebrew/opt/openjdk/bin/java" ]; then
@@ -24,6 +31,13 @@ elif command -v java >/dev/null 2>&1; then
 else
     echo "Aucun Java trouvé. Installe OpenJDK 17+ (brew install openjdk)" >&2
     exit 1
+fi
+
+# Avertissement non-bloquant si symlink Ollama cassé (disque externe non monté)
+OLLAMA_MODELS="$HOME/.ollama/models"
+if [ -L "$OLLAMA_MODELS" ] && [ ! -d "$OLLAMA_MODELS" ]; then
+    echo "⚠ Symlink Ollama cassé : $OLLAMA_MODELS" >&2
+    echo "   Disque externe non monté ? IA sera indisponible. Continue quand même." >&2
 fi
 
 exec "$JAVA" -jar "$JAR" "$@"
