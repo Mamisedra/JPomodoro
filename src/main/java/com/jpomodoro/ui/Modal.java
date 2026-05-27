@@ -34,12 +34,17 @@ public final class Modal {
 
         StringBuilder sb = new StringBuilder(initial == null ? "" : initial);
         int inputY = y + 2;
-        int maxLen = boxW - 4;
+        int visibleLen = boxW - 4;
         screen.setCursorPosition(new TerminalPosition(x + 2, inputY));
 
         while (true) {
-            redrawInput(g, x, inputY, sb.toString(), maxLen);
-            screen.setCursorPosition(new TerminalPosition(x + 2 + Math.min(sb.length(), maxLen - 1), inputY));
+            String value = sb.toString();
+            String visible = value.length() > visibleLen
+                    ? value.substring(value.length() - visibleLen)
+                    : value;
+            redrawInput(g, x, inputY, visible, visibleLen);
+            int cursorOffset = Math.min(visible.length(), visibleLen - 1);
+            screen.setCursorPosition(new TerminalPosition(x + 2 + cursorOffset, inputY));
             screen.refresh();
             KeyStroke k = screen.readInput();
             if (k.getKeyType() == KeyType.Escape) {
@@ -52,8 +57,11 @@ public final class Modal {
             }
             if (k.getKeyType() == KeyType.Backspace && sb.length() > 0) {
                 sb.deleteCharAt(sb.length() - 1);
-            } else if (k.getCharacter() != null && sb.length() < maxLen) {
-                sb.append(k.getCharacter());
+            } else if (k.getCharacter() != null) {
+                char c = k.getCharacter();
+                if (c >= 0x20 && c != 0x7F) {
+                    sb.append(c);
+                }
             }
         }
     }

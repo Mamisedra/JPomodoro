@@ -318,6 +318,10 @@ public class MainWindow implements TimerListener {
 
     // --- Rendering ---
 
+    private static final int MIN_WIDTH = 60;
+    private static final int MIN_HEIGHT = 18;
+    private static final int BANNER_VISIBLE_THRESHOLD = 26;
+
     private void render() throws IOException {
         screen.doResizeIfNecessary();
         screen.clear();
@@ -327,25 +331,34 @@ public class MainWindow implements TimerListener {
         int width = size.getColumns();
         int height = size.getRows();
 
+        if (width < MIN_WIDTH || height < MIN_HEIGHT) {
+            renderTooSmall(g, width, height);
+            screen.refresh();
+            return;
+        }
+
         drawBorder(g, 0, 0, width, height, "");
 
-        int bannerHeight = Banner.HEIGHT + 1;
+        boolean showBanner = height >= BANNER_VISIBLE_THRESHOLD;
+        int bannerHeight = showBanner ? Banner.HEIGHT + 1 : 0;
         int tabsHeight = 1;
         int statsHeight = 3;
         int helpHeight = 4;
 
         int bannerY = 1;
-        int sep1Y = bannerY + bannerHeight;
-        int tabsY = sep1Y + 1;
+        int sep1Y = showBanner ? bannerY + bannerHeight : 0;
+        int tabsY = (showBanner ? sep1Y + 1 : bannerY);
         int sep2Y = tabsY + tabsHeight;
         int contentY = sep2Y + 1;
         int sep4Y = height - helpHeight - 1;
         int statsY = sep4Y - statsHeight;
         int sep3Y = statsY - 1;
-        int contentHeight = sep3Y - contentY;
+        int contentHeight = Math.max(0, sep3Y - contentY);
 
-        renderBanner(g, 1, bannerY, width - 2);
-        drawHorizontal(g, 0, sep1Y, width);
+        if (showBanner) {
+            renderBanner(g, 1, bannerY, width - 2);
+            drawHorizontal(g, 0, sep1Y, width);
+        }
         renderTabs(g, 1, tabsY, width - 2);
         drawHorizontal(g, 0, sep2Y, width);
 
@@ -363,6 +376,25 @@ public class MainWindow implements TimerListener {
         screen.refresh();
     }
 
+    private void renderTooSmall(TextGraphics g, int width, int height) {
+        g.setForegroundColor(TextColor.ANSI.YELLOW);
+        String[] lines = {
+                "Terminal trop petit",
+                "Min : " + MIN_WIDTH + " × " + MIN_HEIGHT,
+                "Actuel : " + width + " × " + height,
+                "Redimensionne la fenêtre."
+        };
+        int startY = Math.max(0, (height - lines.length) / 2);
+        for (int i = 0; i < lines.length; i++) {
+            int y = startY + i;
+            if (y >= height) break;
+            String s = lines[i];
+            if (s.length() > width) s = s.substring(0, width);
+            int xx = Math.max(0, (width - s.length()) / 2);
+            g.putString(xx, y, s);
+        }
+    }
+
     private void renderTabs(TextGraphics g, int x, int y, int w) {
         StringBuilder sb = new StringBuilder();
         for (Tab t : Tab.values()) {
@@ -376,11 +408,19 @@ public class MainWindow implements TimerListener {
     }
 
     private void renderTimerTab(TextGraphics g, int x, int y, int w, int h) {
-        int timerHeight = Math.min(11, h - 4);
+        if (h <= 0) return;
+        // Timer block draws up to BigDigits.HEIGHT + 5 rows (digits, label, bar, cycle, active).
+        // Reserve at least 2 rows for tasks if there's room.
+        int desiredTimerHeight = BigDigits.HEIGHT + 5;
+        int timerHeight = Math.min(desiredTimerHeight, Math.max(1, h - 3));
+        if (timerHeight > h) timerHeight = h;
         renderTimer(g, x, y, w, timerHeight);
         int sepY = y + timerHeight;
-        drawHorizontal(g, x - 1, sepY, w + 2);
-        renderTasks(g, x, sepY + 1, w, h - timerHeight - 1);
+        if (sepY < y + h - 1) {
+            drawHorizontal(g, x - 1, sepY, w + 2);
+            int tasksH = h - timerHeight - 1;
+            if (tasksH > 0) renderTasks(g, x, sepY + 1, w, tasksH);
+        }
     }
 
     private void renderHistoryPlaceholder(TextGraphics g, int x, int y, int w, int h) {
@@ -661,6 +701,7 @@ public class MainWindow implements TimerListener {
     }
 
     private void renderTimer(TextGraphics g, int x, int y, int w, int h) {
+        if (h <= 0 || w <= 0) return;
         SessionType type = timer.currentType();
         int remaining = timer.remainingSeconds();
         int total = timer.totalSeconds();
@@ -674,35 +715,54 @@ public class MainWindow implements TimerListener {
         };
 
         String time = formatTime(remaining);
-        int bigW = BigDigits.widthForMmSs();
-        int bigX = centerX(x, w, bigW);
-        g.setForegroundColor(color);
-        BigDigits.drawMmSs(g, bigX, y + 1, time);
+        boolean canDrawBig = h >= BigDigits.HEIGHT + 1 && w >= BigDigits.widthForMmSs();
+        int row = 0;
 
+        if (canDrawBig) {
+            int bigW = BigDigits.widthForMmSs();
+            int bigX = centerX(x, w, bigW);
+            g.setForegroundColor(color);
+            BigDigits.drawMmSs(g, bigX, y + row, time);
+            row += BigDigits.HEIGHT;
+        } else {
+            g.setForegroundColor(color);
+            g.putString(centerX(x, w, time.length()), y + row, time, SGR.BOLD);
+            row += 1;
+        }
+
+        if (row >= h) return;
         String label = type.label();
         if (state == PomodoroTimer.State.PAUSED) label += " (pause)";
         else if (state == PomodoroTimer.State.IDLE) label += " (arrêté)";
         g.setForegroundColor(color);
-        g.putString(centerX(x, w, label.length()), y + BigDigits.HEIGHT + 1, label, SGR.BOLD);
+        g.putString(centerX(x, w, label.length()), y + row, truncate(label, w), SGR.BOLD);
+        row += 1;
 
+        if (row >= h) return;
         int barWidth = Math.min(w - 4, 50);
-        int filled = total > 0 ? (int) Math.round((1.0 - (double) remaining / total) * barWidth) : 0;
-        int barX = centerX(x, w, barWidth);
-        g.setForegroundColor(color);
-        for (int i = 0; i < barWidth; i++) {
-            g.setCharacter(barX + i, y + BigDigits.HEIGHT + 2, i < filled ? '▓' : '░');
+        if (barWidth > 0) {
+            int filled = total > 0 ? (int) Math.round((1.0 - (double) remaining / total) * barWidth) : 0;
+            int barX = centerX(x, w, barWidth);
+            g.setForegroundColor(color);
+            for (int i = 0; i < barWidth; i++) {
+                g.setCharacter(barX + i, y + row, i < filled ? '▓' : '░');
+            }
+            row += 1;
         }
 
+        if (row >= h) return;
         String cycle = "Cycle " + timer.cycleSlot() + "/" + timer.cyclesBeforeLongBreak()
                 + "  ·  Pomodoros : " + timer.focusCyclesCompleted();
         g.setForegroundColor(TextColor.ANSI.WHITE);
-        g.putString(centerX(x, w, cycle.length()), y + BigDigits.HEIGHT + 3, cycle);
+        g.putString(centerX(x, w, Math.min(cycle.length(), w)), y + row, truncate(cycle, w));
+        row += 1;
 
+        if (row >= h) return;
         String activeLine = activeTaskId == null
                 ? "Aucune tâche active (Espace pour assigner)"
                 : "Tâche active : " + activeTaskTitle();
         g.setForegroundColor(TextColor.ANSI.YELLOW);
-        g.putString(centerX(x, w, activeLine.length()), y + BigDigits.HEIGHT + 4, activeLine);
+        g.putString(centerX(x, w, Math.min(activeLine.length(), w)), y + row, truncate(activeLine, w));
     }
 
     private String activeTaskTitle() {
