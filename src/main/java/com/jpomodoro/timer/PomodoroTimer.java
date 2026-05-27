@@ -214,6 +214,7 @@ public class PomodoroTimer {
                 currentSessionId = sessions.start(to, to == SessionType.FOCUS ? activeTaskId : null);
                 currentSessionStart = Instant.now();
                 state = State.RUNNING;
+                cancelTicker();
                 scheduleTicker();
             }
         }
