@@ -24,12 +24,14 @@ fi
 
 if [ -n "$JAVA_HOME" ] && [ -x "$JAVA_HOME/bin/java" ]; then
     JAVA="$JAVA_HOME/bin/java"
+elif [ -x "/opt/homebrew/opt/openjdk@17/bin/java" ]; then
+    JAVA="/opt/homebrew/opt/openjdk@17/bin/java"
 elif [ -x "/opt/homebrew/opt/openjdk/bin/java" ]; then
     JAVA="/opt/homebrew/opt/openjdk/bin/java"
 elif command -v java >/dev/null 2>&1; then
     JAVA="$(command -v java)"
 else
-    echo "Aucun Java trouvé. Installe OpenJDK 17+ (brew install openjdk)" >&2
+    echo "Aucun Java trouvé. Installe OpenJDK 17+ (brew install openjdk@17)" >&2
     exit 1
 fi
 
